@@ -13,6 +13,15 @@ Phase 2 (耦合): NN 预测 d(x), Germano 自监督, 标度修正损伤演化
 """
 
 import os
+import sys
+
+# 兼容非 UTF-8 控制台（如 Windows GBK）：Unicode 输出不崩溃
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt

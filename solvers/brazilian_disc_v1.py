@@ -10,6 +10,15 @@
 """
 
 import os
+import sys
+
+# 兼容非 UTF-8 控制台（如 Windows GBK）：Unicode 输出不崩溃
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 import numpy as np
 import torch
 import torch.nn as nn
