@@ -1,0 +1,49 @@
+{
+  "reference_kN": 0.47123889803846897,
+  "cases": [
+    {
+      "Nx": 48,
+      "beta": 0.0,
+      "a_mm": 0.0,
+      "steps": 50,
+      "peak_load_kN": 0.36990410734460966,
+      "peak_disp_um": 45.0,
+      "ratio": 0.784960895385196,
+      "back_strength_MPa": 4.709765372311176,
+      "final_maxD": 0.9690548540709263
+    },
+    {
+      "Nx": 72,
+      "beta": 0.0,
+      "a_mm": 0.0,
+      "steps": 50,
+      "peak_load_kN": 0.3870966047703206,
+      "peak_disp_um": 45.0,
+      "ratio": 0.8214445080438171,
+      "back_strength_MPa": 4.928667048262902,
+      "final_maxD": 0.9843760089874947
+    },
+    {
+      "Nx": 96,
+      "beta": 0.0,
+      "a_mm": 0.0,
+      "steps": 50,
+      "peak_load_kN": 0.39102679427749365,
+      "peak_disp_um": 45.0,
+      "ratio": 0.8297846292085436,
+      "back_strength_MPa": 4.978707775251261,
+      "final_maxD": 0.9895515477095199
+    },
+    {
+      "Nx": 48,
+      "beta": 45.0,
+      "a_mm": 5.0,
+      "steps": 50,
+      "peak_load_kN": 0.35748071169905415,
+      "peak_disp_um": 45.0,
+      "ratio": 0.7585976310255095,
+      "back_strength_MPa": 4.551585786153057,
+      "final_maxD": 0.999
+    }
+  ]
+}
