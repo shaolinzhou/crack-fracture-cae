@@ -160,13 +160,18 @@ engineering reporting factor, not a material constant; its physical origin
 ## Releases & DOI
 
 - Repository: public — <https://github.com/shaolinzhou/crack-fracture-cae>
+- **Current release: v2.0.1** — <https://github.com/shaolinzhou/crack-fracture-cae/releases/tag/v2.0.1>
+  - includes the ISRM calibration factor, DOI backfill, README/CITATION updates
+    and the CI YAML fix; same assets as v2.0.0.
 - Release **v2.0.0**: <https://github.com/shaolinzhou/crack-fracture-cae/releases/tag/v2.0.0>
   - assets: four-angle (30/45/60/90°) cloud set `.zip`, ISRM-calibration
     artifacts `.zip`.
 - Release **v2.0.0-zenodo**: archival-trigger tag used to mint the Zenodo DOI.
 - Zenodo: **DOI minted** — https://doi.org/10.5281/zenodo.22309228
-  (record: <https://zenodo.org/records/22309228>). Archival is enabled via the
-  Zenodo GitHub integration on this repository. Please cite as:
+  (record: <https://zenodo.org/records/22309228>) for the v2.0.0-zenodo
+  archival. Archival is enabled via the Zenodo GitHub integration; the v2.0.1
+  release is archived under the same Zenodo concept and will mint a new version
+  DOI (indexing may lag the release by several minutes). Please cite as:
   `shaolinzhou (2026). Crack-Fracture-CAE: scale-invariant hybrid physics+neural
   damage CAE engine (Brazilian disc splitting). Zenodo.
   https://doi.org/10.5281/zenodo.22309228`
