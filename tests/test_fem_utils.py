@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from src.fem_utils import plane_strain_C, mazars_equivalent_strain, von_mises_stress
+from src.fem_utils import (
+    mazars_equivalent_strain,
+    plane_strain_C,
+    q4_B_matrix,
+    rect_b_matrix_center,
+    stress_invariants,
+    von_mises_stress,
+)
 
 
 def test_plane_strain_C_symmetry():
@@ -54,3 +62,28 @@ def test_von_mises_uniaxial():
     sxy = np.zeros(3)
     vm = von_mises_stress(sxx, syy, sxy, nu=0.0)
     assert np.allclose(vm, np.abs(sxx))
+
+
+def test_q4_b_matrix_negative_det_raises():
+    """Reversed (clockwise) element orientation -> negative detJ must raise."""
+    coords = np.array([[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]])
+    with pytest.raises(ValueError):
+        q4_B_matrix(coords, 0.0, 0.0)
+
+
+def test_rect_b_matrix_center_shape():
+    B = rect_b_matrix_center(1.0, 1.0)
+    assert B.shape == (3, 8)
+
+
+def test_stress_invariants_return_triplet():
+    sxx = np.array([10.0, -5.0, 2.0])
+    syy = np.array([3.0, 6.0, -1.0])
+    sxy = np.array([1.0, 0.5, 2.0])
+    eta, theta_bar, seq = stress_invariants(sxx, syy, sxy, nu=0.25)
+    assert eta.shape == (3,)
+    assert theta_bar.shape == (3,)
+    assert seq.shape == (3,)
+    assert np.all(np.isfinite(eta))
+    assert np.all(np.abs(theta_bar) <= 1.0)
+    assert np.all(seq > 0.0)

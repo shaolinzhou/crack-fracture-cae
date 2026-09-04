@@ -43,7 +43,7 @@ Continuum damage (Mazars) + Q4 FEM (plane strain)
 │   ├── pcg_demo.py          PCG vs spsolve consistency demo
 │   ├── cli.py               console entry points (project.scripts)
 │   └── config.py            SolverConfig dataclass
-├── tests/              25 unit tests (core coverage gate >= 75%)  [pytest]
+├── tests/              34 unit tests (core coverage gate >= 85%)  [pytest]
 ├── FEA/                DAT(GiD)-driven general unstructured-Q4 solver (repo-local CLI)
 ├── data/               input meshes: c1.dat (primary), d1.dat
 └── docs/
@@ -87,7 +87,7 @@ python FEA/run_fea.py data/c1.dat --warmup 10 --coupled 0
 ## Tests
 
 ```powershell
-python -m pytest          # 25 passed (src-core coverage >= 75%)
+python -m pytest          # 34 passed (src-core coverage >= 85%)
 ```
 
 Coverage includes: elastic C matrix analytic check, Mazars equivalent-strain
@@ -96,7 +96,7 @@ identities & monotonic damage, fracture-energy calibration, PCG vs direct solve
 finite-difference check, PCG non-convergence guard, DAT-parser regression
 (c1/d1 + malformed files), multi-material DAT solver end-to-end, and a
 fixed-seed Brazilian-disc regression. `src/` numerical-core coverage is gated
-at >= 75% via `--cov-fail-under`.
+at >= 85% via `--cov-fail-under`.
 
 ## Key model & method summary
 
