@@ -36,20 +36,25 @@ Continuum damage (Mazars) + Q4 FEM (plane strain)
 │   │   ├── hybrid_cae_stable.py            stabilized hybrid prototype
 │   │   └── run_brazilian_demo.py / _real.py  demo / mesh adapters
 │   ├── fem_utils.py         plane-strain C, Q4 B/k, invariants
+│   ├── fea_kernels.py       generic element kernels shared by FEA (mean/grad/edges)
 │   ├── damage_models.py     Mazars target, adaptive damping, Gf calibration
 │   ├── networks.py          PhysicsScaleNetSolid + Germano signal + 5-term loss
 │   ├── pcg.py               MatrixFreeOperator + PCG (exact-BC, Jacobi)
 │   ├── solver.py            unified BaseCrackSolver loop
 │   ├── pcg_demo.py          PCG vs spsolve consistency demo
 │   ├── cli.py               console entry points (project.scripts)
+│   ├── calibration.py       ISRM reporting calibration factor (k≈1.205)
 │   └── config.py            SolverConfig dataclass
-├── tests/              34 unit tests (core coverage gate >= 85%)  [pytest]
+├── tests/              43 unit tests (core coverage gate >= 85%)  [pytest]
 ├── FEA/                DAT(GiD)-driven general unstructured-Q4 solver (repo-local CLI)
+├── repro/              reproducibility harness (git HEAD + config + metrics + clouds)
+├── benchmarks/         ISRM calibration runs + figures/metrics
 ├── data/               input meshes: c1.dat (primary), d1.dat
-└── docs/
-    ├── THEORETICAL_FOUNDATION.md        ← operator-algebra theory (中文)
-    ├── THEORETICAL_FOUNDATION.en.md     ← English backup translation
-    └── figures/                         representative outputs
+├── docs/
+│   ├── THEORETICAL_FOUNDATION.md        ← operator-algebra theory (中文)
+│   ├── THEORETICAL_FOUNDATION.en.md     ← English backup translation
+│   └── figures/                         representative outputs
+└── CITATION.cff        citation metadata (Zenodo DOI)
 ```
 
 ## Install
@@ -66,6 +71,7 @@ directory:
 crack-cae            # == python -m src.solvers.crack          (v2.0 flagship)
 crack-cae-v1         # == python -m src.solvers.brazilian_disc_v1
 crack-pcg-demo       # == python -m src.pcg_demo
+crack-fea            # DAT-driven FEA CLI (from a repository checkout)
 ```
 
 ## Quick start (no install required, from the repository root)
@@ -87,16 +93,17 @@ python FEA/run_fea.py data/c1.dat --warmup 10 --coupled 0
 ## Tests
 
 ```powershell
-python -m pytest          # 34 passed (src-core coverage >= 85%)
+python -m pytest          # 43 passed (src-core coverage ~95.9%, gate >= 85%)
 ```
 
 Coverage includes: elastic C matrix analytic check, Mazars equivalent-strain
 identities & monotonic damage, fracture-energy calibration, PCG vs direct solve
 (<1e-6), matrix-free operator self-consistency (<1e-10), loss-gradient
 finite-difference check, PCG non-convergence guard, DAT-parser regression
-(c1/d1 + malformed files), multi-material DAT solver end-to-end, and a
-fixed-seed Brazilian-disc regression. `src/` numerical-core coverage is gated
-at >= 85% via `--cov-fail-under`.
+(c1/d1 + malformed files), multi-material DAT solver end-to-end (incl. coupled
+features/loss path), FEA-src kernel consistency, fea_kernels, config, and
+calibration helpers, and a fixed-seed Brazilian-disc regression. `src/`
+numerical-core coverage is gated at >= 85% via `--cov-fail-under`.
 
 ## Key model & method summary
 
@@ -141,7 +148,8 @@ engineering reporting factor, not a material constant; its physical origin
 
 ## Artifacts & versioning policy
 
-- **Source and small reference data** (`data/*.dat`, `src/`, `solvers/`) are versioned.
+- **Source and small reference data** (`data/*.dat`, `src/` incl. `src/solvers/`)
+  are versioned.
 - **Regenerable runtime outputs** (`snapshots*/`, `FEA/results/`, `*.res`, `*.msh`) are
   git-ignored by default. The four-angle Brazilian-disc cloud set under
   `snapshots_brazilian/` is a one-off **curated reference artifact** and is versioned;
@@ -155,6 +163,7 @@ engineering reporting factor, not a material constant; its physical origin
 - Release **v2.0.0**: <https://github.com/shaolinzhou/crack-fracture-cae/releases/tag/v2.0.0>
   - assets: four-angle (30/45/60/90°) cloud set `.zip`, ISRM-calibration
     artifacts `.zip`.
+- Release **v2.0.0-zenodo**: archival-trigger tag used to mint the Zenodo DOI.
 - Zenodo: **DOI minted** — https://doi.org/10.5281/zenodo.22309228
   (record: <https://zenodo.org/records/22309228>). Archival is enabled via the
   Zenodo GitHub integration on this repository. Please cite as:
