@@ -42,13 +42,10 @@ Continuum damage (Mazars) + Q4 FEM (plane strain)
 ├── examples/           run_pcg_demo.py: PCG vs spsolve consistency
 ├── FEA/                DAT(GiD)-driven general unstructured-Q4 solver
 ├── data/               input meshes: c1.dat (primary), d1.dat
-├── docs/
-│   ├── THEORETICAL_FOUNDATION.md        ← operator-algebra theory (中文)
-│   ├── THEORETICAL_FOUNDATION.en.md     ← English backup translation
-│   └── figures/                         representative outputs
-└── notes/
-    ├── FRACTURE_CAE_MATHEMATICS_AND_IMPLEMENTATION.md   ← full math report
-    └── DEVELOPMENT_REVIEW.md                            ← dev retrospective
+└── docs/
+    ├── THEORETICAL_FOUNDATION.md        ← operator-algebra theory (中文)
+    ├── THEORETICAL_FOUNDATION.en.md     ← English backup translation
+    └── figures/                         representative outputs
 ```
 
 ## Install
@@ -109,5 +106,6 @@ matrix-free operator self-consistency (<1e-10).
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-*Full paper-style derivation and a symbol → code mapping index:
-`notes/FRACTURE_CAE_MATHEMATICS_AND_IMPLEMENTATION.md`.*
+*The full paper-style math report (`FRACTURE_CAE_MATHEMATICS_AND_IMPLEMENTATION.md`)
+and the development retrospective (`DEVELOPMENT_REVIEW.md`) are kept locally under
+`notes/`, which is intentionally excluded from this repository.*

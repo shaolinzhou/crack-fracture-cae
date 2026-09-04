@@ -29,3 +29,6 @@ venv/
 # OS
 Thumbs.db
 .DS_Store
+
+# local-only reference material (not versioned)
+notes/
