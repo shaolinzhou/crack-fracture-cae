@@ -1,0 +1,31 @@
+# python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# packaging
+build/
+dist/
+*.egg-info/
+
+# runtime outputs (all regenerable)
+snapshots/
+snapshots_brazilian/
+results/
+FEA/results/
+*.msh
+*.res
+
+# virtualenv / IDE
+.venv/
+venv/
+.idea/
+.vscode/
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store

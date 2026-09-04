@@ -1,0 +1,34 @@
+[project]
+name = "crack-fracture-cae"
+version = "2.0.0"
+description = "Scale-invariant hybrid (physics + neural) CAE engine for quasi-brittle fracture: Brazilian disc splitting, Mazars damage, matrix-free PCG, Germano self-supervised closure"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

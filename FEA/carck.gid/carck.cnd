@@ -1,0 +1,31 @@
+CONDITION: Moment-Load
+CONDTYPE: over lines
+CONDMESHTYPE: over face elements
+QUESTION: X-Moment
+VALUE: 0.0
+QUESTION: Y-Moment
+VALUE: 0.0
+END CONDITION
+
+CONDITION: Presure
+CONDTYPE: over lines
+CONDMESHTYPE: over face elements
+QUESTION: Presure:
+VALUE: 0.0
+END CONDITION
+
+CONDITION: Displacement
+CONDTYPE: over lines
+CONDMESHTYPE: over face elements
+QUESTION: UX
+VALUE: 0.0
+QUESTION: UY
+VALUE: 0.0
+END CONDITION
+
+CONDITION: Wall
+CONDTYPE: over lines
+CONDMESHTYPE: over face elements
+QUESTION: Wall:
+VALUE: 0.0
+END CONDITION
