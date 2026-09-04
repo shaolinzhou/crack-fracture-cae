@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below. The Zenodo DOI will be filled in after archival."
+message: "If you use this software, please cite it as below."
 title: "Crack-Fracture-CAE: scale-invariant hybrid physics+neural damage CAE engine (Brazilian disc splitting)"
 abstract: >-
   Scale-invariant hybrid (physics + neural) damage CAE engine for quasi-brittle
@@ -10,6 +10,7 @@ authors:
   - family-names: "shaolinzhou"
     given-names: ""
 version: "2.0.0"
+doi: "10.5281/zenodo.22309228"
 date-released: "2026-09-04"
 license: Apache-2.0
 url: "https://github.com/shaolinzhou/crack-fracture-cae"
