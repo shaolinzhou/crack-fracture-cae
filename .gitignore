@@ -37,3 +37,6 @@ notes/
 .coverage
 htmlcov/
 
+
+# internal dev roadmap (not versioned)
+DEVELOPMENT_ROADMAP.md
