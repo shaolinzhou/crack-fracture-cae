@@ -149,6 +149,18 @@ engineering reporting factor, not a material constant; its physical origin
 - For large result collections (movies, 100+ MB fields), prefer **GitHub Releases**
   over committing files; keep the repository lean.
 
+## Releases & DOI
+
+- Repository: public — <https://github.com/shaolinzhou/crack-fracture-cae>
+- Release **v2.0.0**: <https://github.com/shaolinzhou/crack-fracture-cae/releases/tag/v2.0.0>
+  - assets: four-angle (30/45/60/90°) cloud set `.zip`, ISRM-calibration
+    artifacts `.zip`.
+- Zenodo: DOI **pending** — archival is enabled by connecting this GitHub repo
+  on <https://zenodo.org/account/settings/github/> (login with GitHub); every
+  subsequent GitHub Release is then archived automatically and mints a DOI.
+  Once minted, the DOI is added to `CITATION.cff` and cited as
+  `shaolinzhou (2026) Crack-Fracture-CAE, Zenodo, DOI:...`.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

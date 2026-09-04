@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below. The Zenodo DOI will be filled in after archival."
+title: "Crack-Fracture-CAE: scale-invariant hybrid physics+neural damage CAE engine (Brazilian disc splitting)"
+abstract: >-
+  Scale-invariant hybrid (physics + neural) damage CAE engine for quasi-brittle
+  fracture. Q4/plane-strain FEM with Mazars damage and fracture-energy
+  regularization, matrix-free PCG, Germano self-supervised neural closure,
+  reproducibility harness, and DAT-driven general FEA. Apache-2.0.
+authors:
+  - family-names: "shaolinzhou"
+    given-names: ""
+version: "2.0.0"
+date-released: "2026-09-04"
+license: Apache-2.0
+url: "https://github.com/shaolinzhou/crack-fracture-cae"
+repository-code: "https://github.com/shaolinzhou/crack-fracture-cae"
+keywords:
+  - fracture
+  - damage mechanics
+  - Mazars
+  - finite element
+  - neural operator
+  - Brazilian disc
