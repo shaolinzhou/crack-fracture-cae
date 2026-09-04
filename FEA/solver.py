@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from dataclasses import dataclass
 
 import numpy as np
 from scipy.sparse import csr_matrix
@@ -36,112 +36,29 @@ except ModuleNotFoundError:
 from dat_parser import DatModel
 
 
-def plane_strain_C(E: float, nu: float) -> np.ndarray:
-    f = E / ((1.0 + nu) * (1.0 - 2.0 * nu))
-    return np.array(
-        [
-            [f * (1.0 - nu), f * nu, 0.0],
-            [f * nu, f * (1.0 - nu), 0.0],
-            [0.0, 0.0, f * (1.0 - 2.0 * nu) / 2.0],
-        ],
-        dtype=float,
-    )
+# 单一实现收敛 (P0-1): 数值内核由共享库 src/ 提供
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.config import SolverConfig  # noqa: E402
+from src.damage_models import (  # noqa: E402
+    compute_damage_parameters,
+    mazars_damage_target,
+)
+from src.fem_utils import (  # noqa: E402
+    mazars_equivalent_strain,
+    plane_strain_C,
+    q4_unit_stiffness,
+)
 
-def q4_B_matrix(coords: np.ndarray, xi: float, eta: float) -> tuple[np.ndarray, float]:
-    dN_dxi = np.array(
-        [-(1.0 - eta), (1.0 - eta), (1.0 + eta), -(1.0 + eta)],
-        dtype=float,
-    ) * 0.25
-    dN_deta = np.array(
-        [-(1.0 - xi), -(1.0 + xi), (1.0 + xi), (1.0 - xi)],
-        dtype=float,
-    ) * 0.25
+if HAS_TORCH:
+    from src.networks import PhysicsScaleNetSolid  # noqa: E402
+else:
 
-    jac = np.array(
-        [
-            [np.dot(dN_dxi, coords[:, 0]), np.dot(dN_dxi, coords[:, 1])],
-            [np.dot(dN_deta, coords[:, 0]), np.dot(dN_deta, coords[:, 1])],
-        ],
-        dtype=float,
-    )
-    det_j = float(np.linalg.det(jac))
-    if det_j <= 0:
-        raise ValueError(f"Invalid Q4 element with non-positive detJ={det_j}")
+    class PhysicsScaleNetSolid:  # noqa: D101
+        """Fallback for the no-PyTorch path (matches previous behaviour)."""
 
-    inv_j = np.linalg.inv(jac)
-    grads = inv_j @ np.vstack([dN_dxi, dN_deta])
-    dN_dx, dN_dy = grads[0], grads[1]
-
-    B = np.zeros((3, 8), dtype=float)
-    for i in range(4):
-        B[0, 2 * i] = dN_dx[i]
-        B[1, 2 * i + 1] = dN_dy[i]
-        B[2, 2 * i] = dN_dy[i]
-        B[2, 2 * i + 1] = dN_dx[i]
-    return B, det_j
-
-
-def q4_unit_stiffness(coords: np.ndarray, nu: float) -> tuple[np.ndarray, np.ndarray, float]:
-    C_unit = plane_strain_C(1.0, nu)
-    gp = (-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0))
-    k = np.zeros((8, 8), dtype=float)
-    area = 0.0
-    for xi in gp:
-        for eta in gp:
-            B, det_j = q4_B_matrix(coords, xi, eta)
-            k += B.T @ C_unit @ B * det_j
-            area += det_j
-    B_center, _ = q4_B_matrix(coords, 0.0, 0.0)
-    return k, B_center, area
-
-
-class PhysicsScaleNetSolid(nn.Module if HAS_TORCH else object):
-    def __init__(self, input_dim: int = 5, hidden_dim: int = 32):
-        if not HAS_TORCH:
+        def __init__(self, *args, **kwargs):  # noqa: D107
             raise RuntimeError("PyTorch is not available")
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, 1),
-        )
-        nn.init.constant_(self.net[-1].bias, -5.0)
-
-    def forward(self, x):
-        return -0.5 - nn.functional.softplus(self.net(x))
-
-
-@dataclass
-class SolverConfig:
-    n_warmup: int = 500
-    n_coupled: int = 200
-    hidden_dim: int = 32
-    lr: float = 2e-3
-    residual_stiffness: float = 1e-6
-    damping_warmup: float = 0.3
-    damping_base: float = 0.5
-    damping_fast: float = 0.7
-    exp_clip: float = 50.0
-    eps_eq_cap_factor: float = 200.0
-    scale_ratio: float = 0.3
-    lam_g: float = 0.3
-    lam_e: float = 0.5
-    lam_f: float = 0.3
-    lam_d: float = 0.2
-    lam_s: float = 0.1
-    l_c: float = 0.5
-    l_d: float = 1.0
-    output_stride: int = 10
-    auto_anchor_x: bool = True
-    gid_name: str | None = None
-
-    @property
-    def total_steps(self) -> int:
-        return self.n_warmup + self.n_coupled
 
 
 class DatCrackSolver:
@@ -171,7 +88,6 @@ class DatCrackSolver:
         self.nu = first_mat.nu
         self.sigma_t = first_mat.sigma_t
         self.K_Ic = first_mat.K_Ic
-        self.eps0 = self.sigma_t / self.E
         self.C_by_mat = {
             mat_id: plane_strain_C(mat.E, mat.nu) for mat_id, mat in model.materials.items()
         }
@@ -179,8 +95,9 @@ class DatCrackSolver:
 
         self.k0_unit, self.B_cen, self.elem_area = self._precompute_elements()
         self.char_len = float(np.sqrt(np.mean(self.elem_area)))
-        Gf = self.K_Ic**2 * (1.0 - self.nu**2) / self.E
-        self.beta_soft = self.sigma_t / max(Gf / self.char_len - self.sigma_t**2 / (2.0 * self.E), 1e-12)
+        self.eps0, self.beta_soft = compute_damage_parameters(
+            self.E, self.nu, self.sigma_t, self.K_Ic, self.char_len
+        )
         self.eps_eq_cap = self.eps0 * config.eps_eq_cap_factor
 
         self.elem_dof_array = self._build_element_dofs()
@@ -372,18 +289,13 @@ class DatCrackSolver:
             self.stresses[eidx] = (C @ self.strains[eidx]) * (1.0 - self.D[eidx])
 
     def compute_damage_base(self, phase: str) -> tuple[np.ndarray, np.ndarray]:
-        exx, eyy, exy = self.strains[:, 0], self.strains[:, 1], self.strains[:, 2] * 0.5
-        e_avg = 0.5 * (exx + eyy)
-        e_diff = np.sqrt((0.5 * (exx - eyy)) ** 2 + exy**2)
-        eps_eq = np.sqrt(np.maximum(e_avg + e_diff, 0.0) ** 2 + np.maximum(e_avg - e_diff, 0.0) ** 2)
+        exy = self.strains[:, 2] * 0.5
+        eps_eq = mazars_equivalent_strain(self.strains[:, 0], self.strains[:, 1], exy)
         eps_eq = self._nonlocal_average(eps_eq)
 
-        eps_clip = np.clip(eps_eq, 0.0, self.eps_eq_cap)
-        arg = np.clip(self.beta_soft * (eps_clip - self.eps0), 0.0, self.config.exp_clip)
-        D_target = np.where(
-            eps_clip > self.eps0,
-            1.0 - (self.eps0 / (eps_clip + 1e-30)) * np.exp(-arg),
-            0.0,
+        D_target = mazars_damage_target(
+            eps_eq, self.eps0, self.beta_soft, self.eps_eq_cap,
+            exp_clip=self.config.exp_clip,
         )
         driving = np.maximum(D_target - self.D, 0.0)
         if phase == "warmup":
@@ -404,10 +316,8 @@ class DatCrackSolver:
         cos_arg = np.clip(27.0 * J3 / (2.0 * seq**3 + 1e-30), -1.0, 1.0)
         theta_bar = 1.0 - (2.0 / np.pi) * np.arccos(cos_arg)
 
-        exx, eyy, exy = self.strains[:, 0], self.strains[:, 1], self.strains[:, 2] * 0.5
-        e_avg = 0.5 * (exx + eyy)
-        e_diff = np.sqrt((0.5 * (exx - eyy)) ** 2 + exy**2)
-        eps_eq = np.sqrt(np.maximum(e_avg + e_diff, 0.0) ** 2 + np.maximum(e_avg - e_diff, 0.0) ** 2)
+        exy = self.strains[:, 2] * 0.5
+        eps_eq = mazars_equivalent_strain(self.strains[:, 0], self.strains[:, 1], exy)
 
         neighbor_ids = self.elem_tree.query(self.centers, k=min(7, self.n_active))[1]
         gD = np.zeros(self.n_active, dtype=float)
