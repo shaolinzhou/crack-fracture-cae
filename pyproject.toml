@@ -56,3 +56,18 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = [
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-fail-under=75",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/cli.py",
+    "src/pcg_demo.py",
+    "src/solver.py",
+    "src/solvers/*",
+    "src/experimental/*",
+]

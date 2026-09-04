@@ -32,3 +32,8 @@ Thumbs.db
 
 # local-only reference material (not versioned)
 notes/
+
+# coverage data
+.coverage
+htmlcov/
+
