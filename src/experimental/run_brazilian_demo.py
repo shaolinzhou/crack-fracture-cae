@@ -4,17 +4,17 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import os
 
-# 确保输出目录存在
+# Ensure the output directory exists
 os.makedirs("snapshots", exist_ok=True)
 
-# 1. 局部微分引擎
+# 1. Local differentiation engine
 class LocalAutogradKernel(nn.Module):
     def __init__(self, damage_net):
         super().__init__()
         self.damage_net = damage_net
 
     def forward(self, eps_batch):
-        # 局部求导，不构建全局图
+        # Local differentiation without building a global graph
         eps_batch = eps_batch.clone().requires_grad_(True)
         d_pred = self.damage_net(eps_batch)
         dD_deps = torch.autograd.grad(
@@ -24,7 +24,7 @@ class LocalAutogradKernel(nn.Module):
         )[0]
         return d_pred, dD_deps
 
-# 2. 模拟巴西圆盘算子
+# 2. Brazilian disc operator simulation
 class BrazilianDiscEngine:
     def __init__(self, n_elem=1000):
         self.n_elem = n_elem
@@ -32,12 +32,12 @@ class BrazilianDiscEngine:
         self.kernel = LocalAutogradKernel(self.net)
 
     def run_simulation_step(self, step):
-        # 模拟应变场
+        # Simulate the strain field
         eps = torch.randn(self.n_elem, 3)
-        # 获取局部损伤与梯度
+        # Get the local damage and its gradient
         d_val, dD_deps = self.kernel(eps)
 
-        # 可视化状态
+        # Visualize the state
         plt.figure(figsize=(6, 4))
         plt.scatter(eps[:, 0].detach(), d_val.detach(), s=5, c=dD_deps[:, 0].detach(), cmap='viridis')
         plt.colorbar(label='dD/d_eps_xx')
@@ -46,7 +46,7 @@ class BrazilianDiscEngine:
         plt.close()
         return d_val.mean().item()
 
-# 3. 执行主循环
+# 3. Run the main loop
 if __name__ == "__main__":
     engine = BrazilianDiscEngine(n_elem=2000)
     print("开始巴西圆盘损伤演化仿真 (Matrix-Free 架构)...")

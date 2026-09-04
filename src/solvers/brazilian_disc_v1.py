@@ -1,18 +1,18 @@
 """
-巴西圆盘劈裂 — 显式 FEM + 尺度不变算子代数闭合 v1.0
+Brazilian disc splitting — explicit FEM + scale-invariant operator algebra closure v1.0
 ==================================================
-架构严格对标 bfs_projection_solver_v3.py (后台阶流动):
-  Phase 1: 预热 (纯 FEM + Mazars 损伤, 无 NN)
-  Phase 2: 耦合 (NN 预测 d(x), 标度修正损伤演化率)
+Architecture strictly mirrors bfs_projection_solver_v3.py (backward-facing step flow):
+  Phase 1: warmup (pure FEM + Mazars damage, no NN)
+  Phase 2: coupled (NN predicts d(x), scale-corrected damage evolution rate)
 
-核心: 平面应变 Q4 有限元, Mazars 脆性损伤, 位移控制加载
-用法: python brazilian_disc_v1.py
+Core: plane-strain Q4 FEM, Mazars brittle damage, displacement-controlled loading
+Usage: python brazilian_disc_v1.py
 """
 
 import os
 import sys
 
-# 兼容非 UTF-8 控制台（如 Windows GBK）：Unicode 输出不崩溃
+# Tolerate non-UTF-8 consoles (e.g. Windows GBK): Unicode output must not crash
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -29,7 +29,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# 单一实现收敛 (P0-1): 数值内核由共享库 src/ 提供 (包内导入, 无 sys.path hack)
+# Single-implementation convergence (P0-1): numerical kernels from the shared src/ library (in-package import, no sys.path hack)
 from src.damage_models import mazars_damage_target  # noqa: E402
 from src.fem_utils import (  # noqa: E402
     mazars_equivalent_strain,
@@ -46,11 +46,11 @@ from src.networks import (  # noqa: E402
 
 
 # ===========================================================================
-# 巴西圆盘劈裂求解器 (数值内核来自 src.fem_utils / src.damage_models /
-# src.networks; 本文件仅保留 v1 驱动逻辑)
+# Brazilian disc splitting solver (numerical kernels from src.fem_utils /
+# src.damage_models / src.networks; this file keeps only the v1 driver logic)
 # ===========================================================================
 class BrazilianDiscSolver:
-    """巴西圆盘劈裂 — 显式 FEM + 尺度不变算子代数闭合."""
+    """Brazilian disc splitting — explicit FEM + scale-invariant operator algebra closure."""
 
     def __init__(self, *,
                  Nx, Ny, L_domain, R, a_crack,
@@ -79,29 +79,29 @@ class BrazilianDiscSolver:
         self.lam_d = lambda_damage
         self.lam_s = lambda_smooth
 
-        # ---- 网格 ----
+        # ---- Mesh ----
         self.dx = L_domain / (Nx - 1)
         self.dy = L_domain / (Ny - 1)
         self.x_node = np.linspace(0, L_domain, Nx)
         self.y_node = np.linspace(0, L_domain, Ny)
         self.Xc, self.Yc = L_domain / 2.0, L_domain / 2.0
 
-        # ---- 材料 ----
+        # ---- Material ----
         self.C = plane_strain_C(E, nu)
         self.k0 = q4_stiffness_template(self.dx, self.dy, self.C)
         self.k0_unit = q4_stiffness_template(self.dx, self.dy,
                                               plane_strain_C(1.0, nu))
         self.B_cen = b_matrix_center(self.dx, self.dy)
-        self.eps0 = sigma_t / E   # 损伤起始阈值 (等效拉应变)
-        # 断裂能 (平面应变)
+        self.eps0 = sigma_t / E   # damage-onset threshold (equivalent tensile strain)
+        # Fracture energy (plane strain)
         Gf = K_Ic**2 * (1 - nu**2) / E
-        gf = Gf / self.dx       # 单元能量密度
+        gf = Gf / self.dx       # element energy density
         w_e = sigma_t**2 / (2 * E)
-        self.beta_soft = sigma_t / max(gf - w_e, 1e-12)  # Mazars 软化指数
+        self.beta_soft = sigma_t / max(gf - w_e, 1e-12)  # Mazars softening exponent
         print(f"    Mazars: eps0={self.eps0:.2e}, beta={self.beta_soft:.1f}, "
               f"Gf={Gf:.4e} MPa·mm")
 
-        # ---- 圆盘活性单元 ----
+        # ---- Active disc elements ----
         Ne_x, Ne_y = Nx - 1, Ny - 1
         self.active = []
         self.elem_ji = {}    # elem_id → (j, i)
@@ -125,7 +125,7 @@ class BrazilianDiscSolver:
 
         self.n_active = len(self.active)
 
-        # ---- 单元自由度映射 (预计算向量化索引) ----
+        # ---- Element-DOF mapping (precomputed vectorized indices) ----
         self.elem_dof_array = np.zeros((self.n_active, 8), dtype=int)
         for idx, e in enumerate(self.active):
             j, i = self.elem_ji[e]
@@ -138,13 +138,13 @@ class BrazilianDiscSolver:
                 2*n2, 2*n2+1, 2*n3, 2*n3+1
             ]
 
-        # 活性 DOF 标记
+        # Active-DOF flags
         N_dof = 2 * Nx * Ny
         self.N_dof = N_dof
         self.is_active_dof = np.zeros(N_dof, dtype=bool)
         self.is_active_dof[self.elem_dof_array.flatten()] = True
 
-        # 预计算 COO 稀疏组装索引 (一次性计算)
+        # Precompute COO sparse-assembly indices (computed once)
         k0f = self.k0_unit.flatten()  # 64 values
         self._coo_rows = np.zeros(self.n_active * 64, dtype=int)
         self._coo_cols = np.zeros(self.n_active * 64, dtype=int)
@@ -156,14 +156,14 @@ class BrazilianDiscSolver:
             self._coo_rows[idx*64:(idx+1)*64] = r
             self._coo_cols[idx*64:(idx+1)*64] = c
 
-        # 非活性 DOF 对角保护
+        # Diagonal stiffening for inactive DOFs
         inactive = np.where(~self.is_active_dof)[0]
         self._diag_rows = inactive
         self._diag_cols = inactive
         self._diag_vals = np.ones(len(inactive))
 
-        # ---- 预制裂缝 (以角度 beta_crack 偏转, 相对竖直加载方向) ----
-        self.D = np.zeros(self.n_active)   # 损伤场 (flat array, 与 active 对应)
+        # ---- Pre-crack (tilted by angle beta_crack from the vertical loading direction) ----
+        self.D = np.zeros(self.n_active)   # damage field (flat array, aligned with active)
         if a_crack > 0:
             rad = np.radians(beta_crack)
             cos_b, sin_b = np.cos(rad), np.sin(rad)
@@ -173,13 +173,13 @@ class BrazilianDiscSolver:
                 yc = (j + 0.5) * self.dy
                 dx_c = xc - self.Xc
                 dy_c = yc - self.Yc
-                # 旋转到裂缝局部坐标系
+                # Rotate into the crack-local coordinate system
                 x_prime = dx_c * cos_b - dy_c * sin_b
                 y_prime = dx_c * sin_b + dy_c * cos_b
                 if abs(x_prime) < self.dx * 0.6 and abs(y_prime) < a_crack:
                     self.D[idx] = 0.999
 
-        # ---- 加载与支撑节点 ----
+        # ---- Loading and support nodes ----
         self.top_nodes = []
         self.bottom_nodes = []
         self.top_center_node = None
@@ -193,7 +193,7 @@ class BrazilianDiscSolver:
             xn = self.x_node[i]
             if abs(xn - self.Xc) > hw:
                 continue
-            # 找该列中最高和最低的活性节点
+            # Find the highest and lowest active nodes in this column
             j_top, j_bot = -1, Ny
             for j in range(Ny):
                 nid = j * Nx + i
@@ -215,19 +215,19 @@ class BrazilianDiscSolver:
                     min_bot_dist = dist
                     self.bottom_center_node = node
 
-        # ---- 位移 & 力学场 ----
+        # ---- Displacement & mechanical fields ----
         self.U = np.zeros(N_dof)
         self.strains = np.zeros((self.n_active, 3))
         self.stresses = np.zeros((self.n_active, 3))
         self._step_counter = 0
 
-        # ---- 神经网络 ----
+        # ---- Neural network ----
         self.nn = PhysicsScaleNetSolid(input_dim=5, hidden_dim=hidden_dim)
         self.optimizer = optim.Adam(self.nn.parameters(), lr=lr)
         self.nn_active = False
         self.d_field = np.full(self.n_active, -0.5)
 
-        # ---- 历史记录 ----
+        # ---- History ----
         self.history = {
             "load_disp": [],
             "loss_total": [], "loss_germano": [], "loss_elastic": [],
@@ -236,20 +236,20 @@ class BrazilianDiscSolver:
         }
 
     # =====================================================================
-    # I. 弹性求解 (稀疏直接法)
+    # I. Elastic solve (sparse direct)
     # =====================================================================
     def solve_elasticity(self, disp_val):
-        """组装损伤刚度 → 施加 BC → 稀疏求解."""
-        # 向量化组装 (1-D)*E * k0_unit
+        """Assemble the damaged stiffness → apply BCs → sparse solve."""
+        # Vectorized assembly of (1-D)*E * k0_unit
         scale = np.repeat((1 - self.D) * self.E, 64)
         elem_vals = scale * self._k0_tile
 
-        # 合并: 单元刚度 + 非活性 DOF 保护
+        # Combine: element stiffness + inactive-DOF protection
         all_r = np.concatenate([self._coo_rows, self._diag_rows])
         all_c = np.concatenate([self._coo_cols, self._diag_cols])
         all_v = np.concatenate([elem_vals, self._diag_vals])
 
-        # 惩罚法施加 BC
+        # Apply BCs via the penalty method
         K_pen = 1e10 * self.E
         F = np.zeros(self.N_dof)
         bc_r, bc_c, bc_v = [], [], []
@@ -284,14 +284,14 @@ class BrazilianDiscSolver:
         K = csr_matrix((all_v, (all_r, all_c)), shape=(self.N_dof, self.N_dof))
         self.U = spsolve(K, F)
 
-        # 反力统计
+        # Reaction-force tally
         total_fy = 0.0
         for n in self.top_nodes:
             total_fy += K_pen * (-disp_val - self.U[2*n+1])
         return abs(total_fy)
 
     # =====================================================================
-    # II. 应变与应力 (向量化)
+    # II. Strains and stresses (vectorized)
     # =====================================================================
     def compute_strains_stresses(self):
         u_elem = self.U[self.elem_dof_array]    # (n_active, 8)
@@ -300,10 +300,10 @@ class BrazilianDiscSolver:
         self.stresses = sig_undamaged * (1 - self.D)[:, None]
 
     # =====================================================================
-    # III. Mazars 损伤基准增量 (数值内核 → src.damage_models / src.fem_utils)
+    # III. Mazars damage base increment (numerical kernels → src.damage_models / src.fem_utils)
     # =====================================================================
     def compute_damage_base(self):
-        """Mazars 脆性损伤: 等效拉应变准则 (v1 语义: 无阻尼/无上限)."""
+        """Mazars brittle damage: equivalent tensile strain criterion (v1 semantics: no damping / no cap)."""
         exy = self.strains[:, 2] * 0.5   # gxy → exy
         eps_eq = mazars_equivalent_strain(self.strains[:, 0], self.strains[:, 1], exy)
         D_target = mazars_damage_target(eps_eq, self.eps0, self.beta_soft, 1e300, exp_clip=1e300)
@@ -311,7 +311,7 @@ class BrazilianDiscSolver:
         return delta_D, eps_eq
 
     # =====================================================================
-    # IV. 特征提取 (5D 不变量, → src.networks)
+    # IV. Feature extraction (5D invariants, → src.networks)
     # =====================================================================
     def compute_features(self):
         return _compute_features(
@@ -320,10 +320,10 @@ class BrazilianDiscSolver:
         )
 
     # =====================================================================
-    # V. Germano 自监督信号 (→ src.networks; 保留 v1 的 (H, w) 返回约定)
+    # V. Germano self-supervision signal (→ src.networks; keeps the v1 (H, w) return convention)
     # =====================================================================
     def compute_germano_signal(self, delta_D_base):
-        """双滤波耗散功差 → H_solid."""
+        """Two-filter dissipation-power difference → H_solid."""
         H_arr, w_arr, _, _ = _compute_germano_signal(
             self.strains, self.stresses, self.D, delta_D_base,
             self.Ny - 1, self.Nx - 1, self.active, self.elem_ji,
@@ -331,7 +331,7 @@ class BrazilianDiscSolver:
         return H_arr, w_arr
 
     # =====================================================================
-    # VI. 混合损失函数 (5 项, → src.networks)
+    # VI. Hybrid loss function (5 terms, → src.networks)
     # =====================================================================
     def compute_loss(self, d_pred, phi_grid_flat, phi_test_flat):
         return _compute_loss(
@@ -341,24 +341,24 @@ class BrazilianDiscSolver:
         )
 
     # =====================================================================
-    # VII. 损伤更新 (含 (1-D) 饱和约束)
+    # VII. Damage update (with (1-D) saturation constraint)
     # =====================================================================
     def update_damage(self, delta_D_base, d_field_np, use_scaling=True):
         """λ^d × ΔD_base, with saturation."""
         if use_scaling:
             ratio = 0.3        # l / L0
             scale = ratio ** d_field_np  # Correct exponent (no minus sign)
-            scale = np.clip(scale, 0.1, 10.0)   # 防极端
+            scale = np.clip(scale, 0.1, 10.0)   # guard against extreme values
             dD = scale * delta_D_base
         else:
             dD = delta_D_base
         self.D = np.minimum(0.999, self.D + dD)
 
     # =====================================================================
-    # VIII. 纯 FEM 预热步 (无 NN)
+    # VIII. Pure-FEM warmup step (no NN)
     # =====================================================================
     def step_fem_only(self, disp_val):
-        """Phase 1: 纯 Mazars 损伤, 不涉及神经网络."""
+        """Phase 1: pure Mazars damage, no neural network involved."""
         F_reaction = self.solve_elasticity(disp_val)
         self.compute_strains_stresses()
         delta_D, eps_eq = self.compute_damage_base()
@@ -369,22 +369,22 @@ class BrazilianDiscSolver:
         return F_reaction
 
     # =====================================================================
-    # IX. 耦合步 (NN + FEM)
+    # IX. Coupled step (NN + FEM)
     # =====================================================================
     def step_coupled(self, disp_val):
-        """Phase 2: NN 预测 d(x), 标度修正损伤演化."""
+        """Phase 2: NN predicts d(x), scale-corrected damage evolution."""
         self._step_counter += 1
 
-        # 1. 弹性求解
+        # 1. Elastic solve
         F_reaction = self.solve_elasticity(disp_val)
         self.compute_strains_stresses()
         delta_D, eps_eq = self.compute_damage_base()
 
-        # 2. 特征提取 + NN 前向传播
+        # 2. Feature extraction + NN forward pass
         feats = self.compute_features()
         d_pred = self.nn(feats)
 
-        # 3-5. 耗散信号 + 3×3 测试滤波 (→ src.networks)
+        # 3-5. Dissipation signal + 3×3 test filter (→ src.networks)
         _, _, phi, phi_test = _compute_germano_signal(
             self.strains, self.stresses, self.D, delta_D,
             self.Ny - 1, self.Nx - 1, self.active, self.elem_ji,
@@ -395,7 +395,7 @@ class BrazilianDiscSolver:
             j, i = self.elem_ji[e]
             phi_test_flat[idx] = phi_test[j, i]
 
-        # 6. 损失计算 & 反向传播
+        # 6. Loss computation & backpropagation
         loss_t, loss_g, loss_e, loss_f, loss_s = self.compute_loss(
             d_pred, phi_grid_flat, phi_test_flat)
         self.optimizer.zero_grad()
@@ -404,15 +404,15 @@ class BrazilianDiscSolver:
             torch.nn.utils.clip_grad_norm_(self.nn.parameters(), 1.0)
             self.optimizer.step()
 
-        # 7. 以更新后的网络重新预测 d(x)
+        # 7. Re-predict d(x) with the updated network
         with torch.no_grad():
             d_eval = self.nn(feats).numpy().flatten()
         self.d_field = d_eval
 
-        # 8. 标度修正损伤更新
+        # 8. Scale-corrected damage update
         self.update_damage(delta_D, d_eval, use_scaling=True)
 
-        # 记录
+        # Record
         self.history["load_disp"].append((disp_val, F_reaction))
         self.history["loss_total"].append(loss_t.item())
         self.history["loss_germano"].append(loss_g.item())
@@ -425,7 +425,7 @@ class BrazilianDiscSolver:
         return F_reaction
 
     # =====================================================================
-    # X. 步骤分派 (对标 bfs_projection_solver_v3.py)
+    # X. Step dispatch (mirrors bfs_projection_solver_v3.py)
     # =====================================================================
     def step(self, disp_val, step_idx):
         if step_idx < self.n_warmup:
@@ -440,39 +440,39 @@ class BrazilianDiscSolver:
 
 
 # ===========================================================================
-# 3. 主程序 — 参数配置 + 运行 + 可视化
+# 3. Main program — parameter configuration + run + visualization
 # ===========================================================================
 if __name__ == "__main__":
-    # ── 参数 (来自用户提供的砂岩/石灰岩典型值) ──
-    # 统一随机种子（NN 在线训练可复现）
+    # ── Parameters (typical sandstone/limestone values) ──
+    # Fixed random seeds (reproducible NN online training)
     torch.manual_seed(2026)
     np.random.seed(2026)
 
     solver = BrazilianDiscSolver(
         Nx=80, Ny=80,
-        L_domain=60.0,         # 计算域 60×60 mm
-        R=25.0,                # 圆盘半径 25mm (直径 50mm)
-        flat_height=0.4,       # 平台高度 0.4mm (FBD截断)
-        beta_crack=45.0,       # 预制裂缝偏角 (45度, 混合 I-II 型)
-        a_crack=5.0,           # 预制裂缝半长 5mm (2a=10mm, a/R=0.2)
-        E=30000.0,             # 弹性模量 30 GPa (MPa)
-        nu=0.25,               # 泊松比
-        sigma_t=6.0,           # 抗拉强度 6 MPa
-        K_Ic=31.62,            # I型断裂韧性 1.0 MPa√m → 31.62 MPa·√mm
-        loading_half_width=4.4,# 加载宽度 4.4mm (微小于平台半宽 4.45mm)
-        # ── 时间步进 ──
-        n_warmup=60,           # 预热步数 (纯 Mazars 损伤)
-        n_coupled=200,          # 耦合步数 (NN + 标度修正)
-        disp_step=3.0e-3,      # 每步下压 3 μm
-        # ── 损失权重 ──
+        L_domain=60.0,         # computational domain 60×60 mm
+        R=25.0,                # disc radius 25 mm (diameter 50 mm)
+        flat_height=0.4,       # flat loading height 0.4 mm (FBD truncation)
+        beta_crack=45.0,       # pre-crack tilt angle (45 deg, mixed mode I-II)
+        a_crack=5.0,           # pre-crack half-length 5 mm (2a=10 mm, a/R=0.2)
+        E=30000.0,             # elastic modulus 30 GPa (MPa)
+        nu=0.25,               # Poisson ratio
+        sigma_t=6.0,           # tensile strength 6 MPa
+        K_Ic=31.62,            # mode-I toughness 1.0 MPa√m → 31.62 MPa·√mm
+        loading_half_width=4.4,# loading half-width 4.4 mm (slightly below flat half-width 4.45 mm)
+        # ── Time stepping ──
+        n_warmup=60,           # warmup steps (pure Mazars damage)
+        n_coupled=200,          # coupled steps (NN + scale correction)
+        disp_step=3.0e-3,      # downward displacement 3 μm per step
+        # ── Loss weights ──
         lambda_germano=0.3,
         lambda_elastic=0.5,
         lambda_fracture=0.3,
         lambda_damage=0.2,
         lambda_smooth=0.1,
-        # ── 长度尺度 ──
-        l_c=0.5,               # 非局部特征长度 (mm)
-        l_d=1.0,               # 标度场平滑长度 (mm)
+        # ── Length scales ──
+        l_c=0.5,               # nonlocal characteristic length (mm)
+        l_d=1.0,               # scale-field smoothing length (mm)
         lr=2e-3,
     )
 
@@ -490,7 +490,7 @@ if __name__ == "__main__":
 
     os.makedirs("snapshots_brazilian", exist_ok=True)
 
-    # ---- 可视化函数 ----
+    # ---- Visualization function ----
     def save_snapshot(step_idx):
         Ne_x = solver.Nx - 1
         xe = np.linspace(solver.dx/2, solver.L - solver.dx/2, Ne_x)
@@ -512,27 +512,27 @@ if __name__ == "__main__":
                      f"(δ={step_idx*solver.disp_step*1e3:.1f} μm)",
                      fontsize=13, fontweight="bold")
 
-        # (a) 损伤场
+        # (a) Damage field
         im0 = axs[0,0].contourf(XE, YE, D_g, levels=np.linspace(0,1,51),
                                  cmap="inferno")
         axs[0,0].set_title("Damage D"); axs[0,0].set_aspect("equal")
         fig.colorbar(im0, ax=axs[0,0])
 
-        # (b) 水平应力 σ_xx
+        # (b) Horizontal stress σ_xx
         vmax = max(abs(np.nanmin(sxx_g)), abs(np.nanmax(sxx_g)), 1e-3)
         im1 = axs[0,1].contourf(XE, YE, sxx_g, levels=50, cmap="coolwarm",
                                  vmin=-vmax, vmax=vmax)
         axs[0,1].set_title(r"$\sigma_{xx}$ (MPa)"); axs[0,1].set_aspect("equal")
         fig.colorbar(im1, ax=axs[0,1])
 
-        # (c) 标度指数 d(x)
+        # (c) Scale exponent d(x)
         im2 = axs[1,0].contourf(XE, YE, d_g, levels=50, cmap="viridis",
                                  vmin=-3, vmax=-0.3)
         axs[1,0].set_title(r"Scale exponent $d(\mathbf{x})$")
         axs[1,0].set_aspect("equal")
         fig.colorbar(im2, ax=axs[1,0])
 
-        # (d) 荷载-位移
+        # (d) Load-displacement
         ld = solver.history["load_disp"]
         axs[1,1].plot([x[0]*1e3 for x in ld], [x[1]/1e3 for x in ld],
                        "b-o", ms=2, lw=1.5)
@@ -544,12 +544,12 @@ if __name__ == "__main__":
         plt.savefig(f"snapshots_brazilian/step_{step_idx:03d}.png", dpi=120)
         plt.close()
 
-    # ---- 主循环 ----
+    # ---- Main loop ----
     for t in range(total_steps):
         disp = (t + 1) * solver.disp_step
         F, is_warmup = solver.step(disp, t)
 
-        # 打印进度
+        # Print progress
         if t % 5 == 0 or t == total_steps - 1:
             d_val = disp * 1e3
             f_kN = F / 1e3
@@ -564,11 +564,11 @@ if __name__ == "__main__":
                   f"δ={d_val:6.1f} μm | F={f_kN:7.2f} kN | "
                   f"max(D)={maxD:.4f}{extra}")
 
-        # 快照
+        # Snapshot
         if t % 5 == 0 or t == total_steps - 1:
             save_snapshot(t + 1)
 
-    # ---- 最终成果图 ----
+    # ---- Final figure ----
     print("\n>>> 渲染最终 6 面板分析图...")
     Ne_x = solver.Nx - 1
     xe = np.linspace(solver.dx/2, solver.L - solver.dx/2, Ne_x)
@@ -632,7 +632,7 @@ if __name__ == "__main__":
     axs[1,1].set_title("Load–Displacement Curve"); axs[1,1].legend()
     axs[1,1].grid(True, alpha=0.3)
 
-    # (f) Loss + <d> 收敛
+    # (f) Loss + <d> convergence
     nc = len(solver.history["loss_total"])
     if nc > 0:
         st = np.arange(solver.n_warmup + 1, solver.n_warmup + nc + 1)

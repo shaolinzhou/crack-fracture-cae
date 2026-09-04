@@ -1,21 +1,21 @@
 """
-crack.py — 巴西圆盘劈裂 尺度不变混合 CAE 求解器 v2.0
+crack.py — scale-invariant hybrid CAE solver v2.0 for Brazilian disc splitting
 =====================================================
-架构: 符号物理 (Term A) + NN 标度修正 (Term B) + Germano 自监督
-理论: dD = (l/L₀)^d(x) × ΔD_base, d(x) 由 NN 从局部不变量预测
-数值: 残余刚度 + 非局部 eps_eq + 自适应阻尼 + 指数截断
+Architecture: symbolic physics (Term A) + NN scale correction (Term B) + Germano self-supervision
+Theory: dD = (l/L₀)^d(x) × ΔD_base, with d(x) predicted by the NN from local invariants
+Numerics: residual stiffness + nonlocal eps_eq + adaptive damping + exponential clipping
 
-Phase 1 (预热): 纯 Mazars 损伤, 无 NN
-Phase 2 (耦合): NN 预测 d(x), Germano 自监督, 标度修正损伤演化
+Phase 1 (warmup): pure Mazars damage, no NN
+Phase 2 (coupled): NN predicts d(x), Germano self-supervision, scale-corrected damage evolution
 
-用法: python crack.py
-输出: snapshots/step_XXX.png + snapshots/coupled/step_XXX.png
+Usage: python crack.py
+Output: snapshots/step_XXX.png + snapshots/coupled/step_XXX.png
 """
 
 import os
 import sys
 
-# 兼容非 UTF-8 控制台（如 Windows GBK）：Unicode 输出不崩溃
+# Tolerate non-UTF-8 consoles (e.g. Windows GBK): Unicode output must not crash
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -36,8 +36,9 @@ os.makedirs("snapshots/coupled", exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
-# 单一实现收敛 (P0-1): 全部数值内核由共享库 src/ 提供, 本文件仅保留驱动逻辑
-# 包内导入 (python -m src.solvers.crack / 安装后 crack-cae)
+# Single-implementation convergence (P0-1): numerical kernels come from src/,
+# this file keeps only the driver logic.
+# In-package import (python -m src.solvers.crack / crack-cae after install)
 # ---------------------------------------------------------------------------
 from src.damage_models import compute_damage_base as _compute_damage_base  # noqa: E402
 from src.fem_utils import (  # noqa: E402
@@ -54,17 +55,17 @@ from src.networks import (  # noqa: E402
 
 
 # ===========================================================================
-# 1. 物理引擎基座 (数值内核来自 src.fem_utils)
+# 1. Physics engine base (numerical kernels from src.fem_utils)
 # ===========================================================================
 
 
 # ===========================================================================
-# 2. PhysicsScaleNet — 标度指数预测器 (Term B, 来自 src.networks)
+# 2. PhysicsScaleNet — scale exponent predictor (Term B, from src.networks)
 # ===========================================================================
 
 
 # ===========================================================================
-# 3. CrackSolver — 尺度不变混合求解器
+# 3. CrackSolver — scale-invariant hybrid solver
 # ===========================================================================
 class CrackSolver:
     def __init__(self, *,
@@ -74,13 +75,13 @@ class CrackSolver:
                  hidden_dim=32, lr=2e-3,
                  lam_g=0.3, lam_e=0.5, lam_f=0.3, lam_d=0.2, lam_s=0.1,
                  l_c=0.5, l_d=1.0):
-        # ── 网格 ──
+        # ── Mesh ──
         self.Nx, self.Ny = Nx, Ny
         self.L = L_domain; self.R = R
         self.dx = L_domain/(Nx-1); self.dy = L_domain/(Ny-1)
         self.Xc = self.Yc = L_domain/2
 
-        # ── 材料 ──
+        # ── Material ──
         self.E, self.nu = E, nu
         self.sigma_t = sigma_t; self.K_Ic = K_Ic
         self.a_crack = a_crack; self.beta_crack = beta_crack
@@ -92,20 +93,20 @@ class CrackSolver:
         self.beta_soft = sigma_t/max(Gf/self.dx - sigma_t**2/(2*E), 1e-12)
         print(f"  Mazars: ε₀={self.eps0:.2e}, β={self.beta_soft:.1f}, Gf={Gf:.4e} MPa·mm")
 
-        # ── 数值参数 ──
+        # ── Numerical parameters ──
         self.residual_stiffness = 1e-6
-        self.damping_warmup = 0.3    # 预热阶段统一阻尼 (远低于 0.8, 防止级联)
-        self.damping_base = 0.5      # 耦合阶段远场阻尼
-        self.damping_fast = 0.7      # 耦合阶段高驱动力区阻尼
+        self.damping_warmup = 0.3    # uniform damping during warmup (well below 0.8, prevents cascading)
+        self.damping_base = 0.5      # far-field damping in the coupled phase
+        self.damping_fast = 0.7      # damping in high-drive regions in the coupled phase
         self.exp_clip = 50.0
         self.nonlocal_radius = 1
         self.eps_eq_cap = self.eps0*200
 
-        # ── 标度修正参数 ──
-        self.scale_ratio = 0.3      # l/L₀ (子网格/特征长度比)
+        # ── Scale-correction parameters ──
+        self.scale_ratio = 0.3      # l/L₀ (subgrid/characteristic-length ratio)
 
         # ════════════════════════════════════════════════════════
-        # 圆形几何域 Masking
+        # Circular geometric domain masking
         # ════════════════════════════════════════════════════════
         Ne_x, Ne_y = Nx-1, Ny-1
         self.active = []; self.elem_ji = {}
@@ -122,7 +123,7 @@ class CrackSolver:
         self.n_active = len(self.active)
         print(f"  几何: {self.n_active}/{Ne_x*Ne_y} 活性单元 (R={R} mm)")
 
-        # ── DOF 映射 & COO 组装 ──
+        # ── DOF mapping & COO assembly ──
         self.elem_dof_array = np.zeros((self.n_active, 8), dtype=int)
         for idx, e in enumerate(self.active):
             j, i = self.elem_ji[e]
@@ -143,7 +144,7 @@ class CrackSolver:
         self._diag_rows = self._diag_cols = inactive
         self._diag_vals = np.ones(len(inactive))
 
-        # ── 边界条件 ──
+        # ── Boundary conditions ──
         self.top_nodes = []; self.bottom_nodes = []
         self.top_center_node = self.bottom_center_node = None
         min_top = min_bot = 1e9; hw = loading_half_width
@@ -163,7 +164,7 @@ class CrackSolver:
                 if abs(xn-self.Xc)<min_bot: min_bot=abs(xn-self.Xc); self.bottom_center_node=node
         print(f"  BC: top={len(self.top_nodes)}, bot={len(self.bottom_nodes)}")
 
-        # ── 预制裂缝 (含渐变过渡带) ──
+        # ── Pre-crack (with smooth transition band) ──
         self.D = np.zeros(self.n_active)
         if a_crack > 0:
             rad = np.radians(beta_crack); cos_b, sin_b = np.cos(rad), np.sin(rad)
@@ -180,32 +181,32 @@ class CrackSolver:
                     dist = (abs(xp)-self.dx*0.6)/(transition_hw-self.dx*0.6)
                     self.D[idx] = 0.999*np.exp(-3*dist)
 
-        # ── 位移 & 力学场 ──
+        # ── Displacement & mechanical fields ──
         self.U = np.zeros(N_dof)
         self.strains = np.zeros((self.n_active, 3))
         self.stresses = np.zeros((self.n_active, 3))
 
-        # ── 步进 ──
+        # ── Stepping ──
         self.n_warmup = n_warmup; self.n_coupled = n_coupled
         self.disp_step = disp_step
         self.total_steps = n_warmup + n_coupled
 
-        # ── NN & 标度场 ──
+        # ── NN & scale field ──
         self.nn = PhysicsScaleNetSolid(input_dim=5, hidden_dim=hidden_dim)
         self.optimizer = optim.Adam(self.nn.parameters(), lr=lr)
         self.nn_active = False
-        self.d_field = np.full(self.n_active, -0.5)  # 初始弹性锚点
+        self.d_field = np.full(self.n_active, -0.5)  # initial elastic anchor
         self.lam_g = lam_g; self.lam_e = lam_e; self.lam_f = lam_f
         self.lam_d = lam_d; self.lam_s = lam_s
         self.l_c = l_c; self.l_d = l_d
 
-        # ── 历史 ──
+        # ── History ──
         self.history = {"load_disp": [], "max_damage": [],
                         "loss_total": [], "mean_d": []}
         self._step_counter = 0
 
     # =====================================================================
-    # I. 弹性求解 (Term A)
+    # I. Elastic solve (Term A)
     # =====================================================================
     def solve_elasticity(self, disp_val):
         D_clipped = np.clip(self.D, 0, 1-self.residual_stiffness)
@@ -234,7 +235,7 @@ class CrackSolver:
         return abs(total_fy)
 
     # =====================================================================
-    # II. 应变与应力
+    # II. Strains and stresses
     # =====================================================================
     def compute_strains_stresses(self):
         u_elem = self.U[self.elem_dof_array]
@@ -242,7 +243,7 @@ class CrackSolver:
         self.stresses = (self.strains @ self.C.T)*(1-self.D)[:,None]
 
     # =====================================================================
-    # III. Mazars 损伤 (非局部 + 自适应阻尼 + eps 上限放宽) → src.damage_models
+    # III. Mazars damage (nonlocal + adaptive damping + relaxed eps cap) → src.damage_models
     # =====================================================================
     def compute_damage_base(self, phase="warmup"):
         delta_D, eps_eq = _compute_damage_base(
@@ -256,7 +257,7 @@ class CrackSolver:
         return delta_D, eps_eq
 
     # =====================================================================
-    # IV. 特征提取 — 5D 力学不变量 → NN 输入 (→ src.networks)
+    # IV. Feature extraction — 5D mechanical invariants → NN input (→ src.networks)
     # =====================================================================
     def compute_features(self):
         return _compute_features(
@@ -265,7 +266,7 @@ class CrackSolver:
         )
 
     # =====================================================================
-    # V. Germano 自监督信号 (→ src.networks)
+    # V. Germano self-supervision signal (→ src.networks)
     # =====================================================================
     def compute_germano_signal(self, delta_D_base):
         return _compute_germano_signal(
@@ -274,7 +275,7 @@ class CrackSolver:
         )
 
     # =====================================================================
-    # VI. 混合损失函数 (5 项, → src.networks)
+    # VI. Hybrid loss function (5 terms, → src.networks)
     # =====================================================================
     def compute_loss(self, d_pred, phi_grid_flat, phi_test_flat):
         return _compute_loss(
@@ -284,7 +285,7 @@ class CrackSolver:
         )
 
     # =====================================================================
-    # VII. 标度修正损伤更新
+    # VII. Scale-corrected damage update
     # =====================================================================
     def update_damage(self, delta_D_base, d_field_np, use_scaling=True):
         if use_scaling:
@@ -295,7 +296,7 @@ class CrackSolver:
         self.D = np.clip(self.D+dD, 0.0, 0.99999)
 
     # =====================================================================
-    # VIII. Phase 1 — 纯 FEM 预热步
+    # VIII. Phase 1 — pure-FEM warmup step
     # =====================================================================
     def step_fem_only(self, disp_val):
         F = self.solve_elasticity(disp_val)
@@ -305,7 +306,7 @@ class CrackSolver:
         return F, eps_eq
 
     # =====================================================================
-    # IX. Phase 2 — 耦合步 (NN + Germano + 标度修正)
+    # IX. Phase 2 — coupled step (NN + Germano + scale correction)
     # =====================================================================
     def step_coupled(self, disp_val):
         self._step_counter += 1
@@ -335,7 +336,7 @@ class CrackSolver:
         return F, eps_eq, loss_t
 
     # =====================================================================
-    # X. 步骤分派
+    # X. Step dispatch
     # =====================================================================
     def step(self, disp_val, step_idx):
         if step_idx < self.n_warmup:
@@ -349,22 +350,22 @@ class CrackSolver:
             return (F, eps_eq, loss_t), False
 
     # =====================================================================
-    # XI. 可视化
+    # XI. Visualization
     # =====================================================================
     def _get_precrack_line(self, ax):
-        """计算并绘制预制裂缝线段 (如果存在)"""
+        """Compute and draw the pre-crack line segment (if present)."""
         if self.a_crack <= 0:
             return None, None
 
         rad = np.radians(self.beta_crack)
         cos_b, sin_b = np.cos(rad), np.sin(rad)
 
-        # 裂缝长度: 2a (从圆心向两边各延伸 a)
+        # Crack length: 2a (extends a from the center to each side)
         crack_len = 2 * self.a_crack
 
-        # 计算线段起点和终点 (以圆心为中点)
-        # 注意: Xc, Yc 是域的几何中心坐标
-        # 裂缝方向: dx = sin(beta), dy = cos(beta)
+        # Compute segment start/end points (centered on the domain center)
+        # Note: Xc, Yc are the geometric center coordinates of the domain
+        # Crack orientation: dx = sin(beta), dy = cos(beta)
         half_dx = (crack_len / 2) * sin_b
         half_dy = (crack_len / 2) * cos_b
 
@@ -373,19 +374,19 @@ class CrackSolver:
         x_end = self.Xc + half_dx
         y_end = self.Yc + half_dy
 
-        # 在所有子图上绘制黑线
+        # Draw a black line on every subplot
         for i_ax, a in enumerate(ax):
             a.plot([x_start, x_end], [y_start, y_end], 'k-', linewidth=2.5, zorder=10)
 
-            # 在 Damage D 图上标注 beta_crack 数值
+            # Annotate the beta_crack value on the Damage D panel
             if i_ax == 0:
-                # 线段中点 (圆心: 域的几何中心)
+                # Midpoint of the segment (center of the domain)
                 x_mid = self.Xc
                 y_mid = self.Yc
 
-                # 标注文字位置 (沿垂直裂缝方向偏移)
+                # Text position (offset perpendicular to the crack)
                 offset = self.R * 0.08
-                # 垂直于裂缝的方向 (旋转90度)
+                # Direction perpendicular to the crack (rotated by 90 deg)
                 x_text = x_mid + offset * cos_b
                 y_text = y_mid - offset * sin_b
 
@@ -436,7 +437,7 @@ class CrackSolver:
             axes[2].set_title("Scale exponent d(x)"); axes[2].set_aspect("equal")
             plt.colorbar(im2, ax=axes[2], shrink=0.8)
 
-        # 绘制预制裂缝线段和标注
+        # Draw the pre-crack line segment and annotation
         self._get_precrack_line(axes)
 
         out_dir = "snapshots" if is_warmup else "snapshots/coupled"
@@ -457,21 +458,21 @@ class CrackSolver:
 
 
 # ===========================================================================
-# 4. 主程序
+# 4. Main program
 # ===========================================================================
 if __name__ == "__main__":
     # ═══════════════════════════════════════════════════════════════════
-    # 参数说明 — 巴西圆盘劈裂试验 ISRM 标准
+    # Parameters — Brazilian disc splitting test, ISRM standard
     # ═══════════════════════════════════════════════════════════════════
-    # 网格: Nx=80, Ny=80, L_domain=60 mm, R=25 mm (φ50), flat=0.4 mm
-    # 材料 (砂岩): E=30 GPa, ν=0.25, σ_t=6 MPa, K_Ic=1.0 MPa·√m
-    # 裂缝: 2a=10 mm (a/R=0.2), β=45° (I-II 混合型)
-    # 加载: disp_step=3 μm, 总 250 步 → 0.75 mm
-    # 切换: 50 步预热后激活 NN (损伤起始附近)
-    # NN: hidden=32, lr=2e-3, Lamé 损失权重
+    # Mesh: Nx=80, Ny=80, L_domain=60 mm, R=25 mm (φ50), flat=0.4 mm
+    # Material (sandstone): E=30 GPa, ν=0.25, σ_t=6 MPa, K_Ic=1.0 MPa·√m
+    # Crack: 2a=10 mm (a/R=0.2), β=45° (mixed mode I-II)
+    # Loading: disp_step=3 μm, 250 steps total → 0.75 mm
+    # Switch: NN activated after 50 warmup steps (near damage onset)
+    # NN: hidden=32, lr=2e-3, Lamé loss weights
     # ═══════════════════════════════════════════════════════════════════
 
-    # 统一随机种子（NN 在线训练可复现）
+    # Fixed random seeds (reproducible NN online training)
     torch.manual_seed(2026)
     np.random.seed(2026)
 
@@ -480,7 +481,7 @@ if __name__ == "__main__":
         E=30000.0, nu=0.25, sigma_t=6.0, K_Ic=31.62,
         loading_half_width=4.4, disp_step=3.0e-3,
         beta_crack=90.0, a_crack=5.0,
-        n_warmup=50, n_coupled=500,     # 预热到损伤起始即切换 (d~150 μm)
+        n_warmup=50, n_coupled=500,     # switch to coupled near damage onset (d~150 μm)
         hidden_dim=32, lr=2e-3,
         lam_g=0.3, lam_e=0.5, lam_f=0.3, lam_d=0.2, lam_s=0.1,
         l_c=0.5, l_d=1.0)

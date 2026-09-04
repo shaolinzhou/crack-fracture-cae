@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from src.solvers.brazilian_disc_v1 import BrazilianDiscSolver  # noqa: E402
 
-# 确保输出目录存在
+# Ensure the output directory exists
 os.makedirs("snapshots", exist_ok=True)
 
 class PhysicsScaleNetSolid(nn.Module):
@@ -26,27 +26,27 @@ class HybridSolver(BrazilianDiscSolver):
         self.ai_net = PhysicsScaleNetSolid()
 
     def solve_step(self, step, disp_val):
-        # 1. 物理求解
+        # 1. Physical solve
         fy = self.solve_elasticity(disp_val)
         self.compute_strains_stresses()
 
-        # 2. 损伤更新
+        # 2. Damage update
         delta_D, eps_eq = self.compute_damage_base()
         self.D += delta_D
 
-        # 3. 结果输出
+        # 3. Output results
         self._visualize(step)
         return fy
 
     def _visualize(self, step):
-        # 初始化网格
+        # Initialize the grid
         D_grid = np.zeros((self.Ny - 1, self.Nx - 1))
         S_grid = np.zeros((self.Ny - 1, self.Nx - 1))
 
         for idx, e in enumerate(self.active):
             j, i = self.elem_ji[e]
             D_grid[j, i] = self.D[idx]
-            # 计算 von Mises 应力: sqrt(3*J2)
+            # Compute the von Mises stress: sqrt(3*J2)
             sxx, syy, sxy = self.stresses[idx]
             szz = self.nu * (sxx + syy)
             seq = np.sqrt(0.5*((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2) + 3*sxy**2)
@@ -54,12 +54,12 @@ class HybridSolver(BrazilianDiscSolver):
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-        # 损伤场
+        # Damage field
         im1 = axes[0].imshow(D_grid, origin='lower', cmap='hot', vmin=0, vmax=1)
         axes[0].set_title(f"Damage Field D - Step {step}")
         plt.colorbar(im1, ax=axes[0])
 
-        # 应力场 (Von Mises)
+        # Stress field (von Mises)
         im2 = axes[1].imshow(S_grid, origin='lower', cmap='viridis')
         axes[1].set_title(f"Von Mises Stress - Step {step}")
         plt.colorbar(im2, ax=axes[1])

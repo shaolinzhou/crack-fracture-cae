@@ -24,7 +24,7 @@ class StableHybridSolver(BrazilianDiscSolver):
         all_v = np.concatenate([elem_vals, self._diag_vals])
         K_pen = 1e10 * self.E
         F = np.zeros(self.N_dof)
-        # 边界条件组装
+        # Assemble boundary conditions
         bc_r, bc_c, bc_v = [], [], []
         for n in self.bottom_nodes:
             bc_r.append(2*n+1); bc_c.append(2*n+1); bc_v.append(K_pen)

@@ -36,8 +36,8 @@ except ModuleNotFoundError:
 from dat_parser import DatModel
 
 
-# 单一实现收敛 (P0-1): 数值内核由共享库 src/ 提供
-# 已安装为包时无需改 sys.path; 否则回退到仓库根
+# Single-implementation convergence (P0-1): numerical kernels come from the shared src/ library.
+# No sys.path change is needed once installed as a package; otherwise fall back to the repo root.
 try:
     from src import config as _src_probe  # noqa: F401
 except ImportError:

@@ -25,19 +25,19 @@ class HybridCAESolver:
     def apply_operator(self, u_vec, D_vec, B_matrices, v_elems):
         """
         Matrix-Free: K*u = sum(B.T * C_ep * B * v_elem)
-        这是求解器的心脏：直接在积分点计算，不组装全局矩阵
+        This is the heart of the solver: compute directly at integration points without assembling a global matrix
         """
-        # 1. 局部应变: eps = B * u_elem
-        # 2. 局部应力: sigma = C_ep(D, eps) * eps
-        # 3. 内部力组装: f_int = B.T * sigma
+        # 1. Local strain: eps = B * u_elem
+        # 2. Local stress: sigma = C_ep(D, eps) * eps
+        # 3. Internal force assembly: f_int = B.T * sigma
 
-        # 这里仅展示符号逻辑框架，实际操作中使用 torch.einsum 向量化处理
-        # 这里的 C_ep 包含了物理项与 AI 神经梯度项的求和
+        # This only demonstrates the symbolic logic framework; actual operations are vectorized with torch.einsum
+        # Here C_ep includes the sum of the physical terms and the AI neural-gradient terms
         pass
 
     def pcg_solve(self, b, D, B_matrices, v_elems, max_iter=100, tol=1e-6):
         """
-        无矩阵共轭梯度法 (Matrix-Free PCG)
+        Matrix-Free preconditioned conjugate gradient (Matrix-Free PCG)
         """
         x = torch.zeros_like(b)
         r = b - self.apply_operator(x, D, B_matrices, v_elems)

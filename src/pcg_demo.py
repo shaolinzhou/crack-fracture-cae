@@ -1,7 +1,7 @@
 """
-PCG 求解器演示 — 验证 Matrix-Free PCG 与 spsolve 结果一致性
+PCG solver demo — verify that matrix-free PCG matches spsolve results
 =============================================================
-用法: python -m src.pcg_demo
+Usage: python -m src.pcg_demo
 """
 from __future__ import annotations
 
