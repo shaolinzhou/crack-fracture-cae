@@ -1,3 +1,4 @@
+# DEPRECATED (early prototype, superseded by solvers/crack.py v2.0).
 """
 巴西圆盘劈裂实验 — 固体多尺度断裂的物理-AI 混合求解器
 ===================================================

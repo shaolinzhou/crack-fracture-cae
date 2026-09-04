@@ -1,3 +1,4 @@
+# DEPRECATED (experimental prototype / demo): kept for research lineage only.
 import torch
 import torch.nn as nn
 
@@ -55,4 +56,6 @@ class HybridCAESolver:
             rsold = rsoldnew
         return x
 
-print("Matrix-Free PCG Logic Implemented.")
+
+if __name__ == "__main__":
+    print("Matrix-Free PCG Logic Implemented.")

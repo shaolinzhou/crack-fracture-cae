@@ -25,12 +25,15 @@ Continuum damage (Mazars) + Q4 FEM (plane strain)
 ## Repository layout
 
 ```
-├── solvers/            standalone runnable solvers & prototypes
-│   ├── crack.py              v2.0: nonlocal ε_eq + adaptive damping + full 5-term loss
-│   ├── brazilian_disc_v1.py  v1.0: base BrazilianDiscSolver class + driver
+├── solvers/            standalone maintained solvers (single numerical core)
+│   ├── crack.py              v2.0 flagship: nonlocal ε_eq + adaptive damping + 5-term loss
+│   └── brazilian_disc_v1.py  v1.0 baseline: BrazilianDiscSolver class + driver
+├── experimental/       DEPRECATED prototypes/demos (research lineage only)
 │   ├── brazilian_splitting_solver.py   early 100×100 prototype
-│   ├── hybrid_cae_*.py       hybrid prototypes (subclass BrazilianDiscSolver)
-│   └── run_brazilian_*.py    demo / mesh adapters
+│   ├── hybrid_cae_solver_v1.py         matrix-free logic sketch
+│   ├── hybrid_cae_solver_final.py      hybrid prototype (subclasses v1)
+│   ├── hybrid_cae_stable.py            stabilized hybrid prototype
+│   └── run_brazilian_demo.py / _real.py  demo / mesh adapters
 ├── src/                shared numerical library (fracture line)
 │   ├── fem_utils.py         plane-strain C, Q4 B/k, invariants
 │   ├── damage_models.py     Mazars target, adaptive damping, Gf calibration
@@ -101,6 +104,16 @@ matrix-free operator self-consistency (<1e-10).
 - **General FEA**: DAT-driven multi-material unstructured Q4, cKDTree-based
   nonlocal/gradient, Wall (pre-crack) initialization, auto UX anchor, GiD
   `.msh`/`.res` export, CPU-only fallbacks when torch/matplotlib are absent.
+
+## Artifacts & versioning policy
+
+- **Source and small reference data** (`data/*.dat`, `src/`, `solvers/`) are versioned.
+- **Regenerable runtime outputs** (`snapshots*/`, `FEA/results/`, `*.res`, `*.msh`) are
+  git-ignored by default. The four-angle Brazilian-disc cloud set under
+  `snapshots_brazilian/` is a one-off **curated reference artifact** and is versioned;
+  it can be regenerated with `python notes/regenerate_brazilian_sweep.py`.
+- For large result collections (movies, 100+ MB fields), prefer **GitHub Releases**
+  over committing files; keep the repository lean.
 
 ## License
 

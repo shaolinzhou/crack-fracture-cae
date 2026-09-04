@@ -33,6 +33,7 @@ extend-ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "solvers/*.py" = ["E701", "E702"]
+"experimental/*.py" = ["E701", "E702", "E402"]
 "examples/run_pcg_demo.py" = ["E402"]
 
 [tool.mypy]

@@ -1,8 +1,15 @@
+# DEPRECATED (experimental prototype / demo): kept for research lineage only.
+import sys
+from pathlib import Path
+
 import torch
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-from brazilian_disc_v1 import BrazilianDiscSolver
+
+# subclasses the maintained v1 baseline located in ../solvers
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "solvers"))
+from brazilian_disc_v1 import BrazilianDiscSolver  # noqa: E402
 
 # 确保输出目录存在
 os.makedirs("snapshots", exist_ok=True)

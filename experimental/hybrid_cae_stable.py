@@ -1,7 +1,14 @@
+# DEPRECATED (experimental prototype / demo): kept for research lineage only.
+import sys
+from pathlib import Path
+
 import numpy as np
 import os
 import matplotlib.pyplot as plt
-from brazilian_disc_v1 import BrazilianDiscSolver
+
+# subclasses the maintained v1 baseline located in ../solvers
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "solvers"))
+from brazilian_disc_v1 import BrazilianDiscSolver  # noqa: E402
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
 
