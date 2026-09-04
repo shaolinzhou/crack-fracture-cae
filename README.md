@@ -25,25 +25,26 @@ Continuum damage (Mazars) + Q4 FEM (plane strain)
 ## Repository layout
 
 ```
-├── solvers/            standalone maintained solvers (single numerical core)
-│   ├── crack.py              v2.0 flagship: nonlocal ε_eq + adaptive damping + 5-term loss
-│   └── brazilian_disc_v1.py  v1.0 baseline: BrazilianDiscSolver class + driver
-├── experimental/       DEPRECATED prototypes/demos (research lineage only)
-│   ├── brazilian_splitting_solver.py   early 100×100 prototype
-│   ├── hybrid_cae_solver_v1.py         matrix-free logic sketch
-│   ├── hybrid_cae_solver_final.py      hybrid prototype (subclasses v1)
-│   ├── hybrid_cae_stable.py            stabilized hybrid prototype
-│   └── run_brazilian_demo.py / _real.py  demo / mesh adapters
-├── src/                shared numerical library (fracture line)
+├── src/                    installable package `crack_fracture_cae` (import name `src`)
+│   ├── solvers/            maintained mainline drivers (thin; kernels live in the package)
+│   │   ├── crack.py              v2.0 flagship (python -m src.solvers.crack)
+│   │   └── brazilian_disc_v1.py  v1.0 baseline (python -m src.solvers.brazilian_disc_v1)
+│   ├── experimental/       DEPRECATED prototypes/demos (research lineage only)
+│   │   ├── brazilian_splitting_solver.py   early 100×100 prototype
+│   │   ├── hybrid_cae_solver_v1.py         matrix-free logic sketch
+│   │   ├── hybrid_cae_solver_final.py      hybrid prototype (subclasses v1)
+│   │   ├── hybrid_cae_stable.py            stabilized hybrid prototype
+│   │   └── run_brazilian_demo.py / _real.py  demo / mesh adapters
 │   ├── fem_utils.py         plane-strain C, Q4 B/k, invariants
 │   ├── damage_models.py     Mazars target, adaptive damping, Gf calibration
 │   ├── networks.py          PhysicsScaleNetSolid + Germano signal + 5-term loss
 │   ├── pcg.py               MatrixFreeOperator + PCG (exact-BC, Jacobi)
 │   ├── solver.py            unified BaseCrackSolver loop
+│   ├── pcg_demo.py          PCG vs spsolve consistency demo
+│   ├── cli.py               console entry points (project.scripts)
 │   └── config.py            SolverConfig dataclass
 ├── tests/              13 unit tests (fracture line)  [pytest]
-├── examples/           run_pcg_demo.py: PCG vs spsolve consistency
-├── FEA/                DAT(GiD)-driven general unstructured-Q4 solver
+├── FEA/                DAT(GiD)-driven general unstructured-Q4 solver (repo-local CLI)
 ├── data/               input meshes: c1.dat (primary), d1.dat
 └── docs/
     ├── THEORETICAL_FOUNDATION.md        ← operator-algebra theory (中文)
@@ -54,22 +55,30 @@ Continuum damage (Mazars) + Q4 FEM (plane strain)
 ## Install
 
 ```powershell
-pip install numpy scipy matplotlib torch        # or: pip install -e ".[dev]"
+pip install numpy scipy matplotlib torch        # runtime deps
+pip install -e ".[dev]"                         # install package + dev tools
 ```
 
-## Quick start
+After `pip install -e .` the package and console scripts are available from any
+directory:
+
+```powershell
+crack-cae            # == python -m src.solvers.crack          (v2.0 flagship)
+crack-cae-v1         # == python -m src.solvers.brazilian_disc_v1
+crack-pcg-demo       # == python -m src.pcg_demo
+```
+
+## Quick start (no install required, from the repository root)
 
 ```powershell
 # --- flagship v2.0 Brazilian disc (outputs to current dir snapshots\) ---
-cd solvers
-python crack.py
+python -m src.solvers.crack
 
-# --- v1.0 (snapshots_brazilian/ + brazilian_disc_result.png) ---
-python brazilian_disc_v1.py
+# --- v1.0 ---
+python -m src.solvers.brazilian_disc_v1
 
 # --- PCG vs spsolve consistency check (matrix-free) ---
-cd ..
-python examples/run_pcg_demo.py
+python -m src.pcg_demo
 
 # --- general DAT-driven solver (any unstructured Q4 mesh) ---
 python FEA/run_fea.py data/c1.dat --warmup 10 --coupled 0
@@ -104,6 +113,15 @@ matrix-free operator self-consistency (<1e-10).
 - **General FEA**: DAT-driven multi-material unstructured Q4, cKDTree-based
   nonlocal/gradient, Wall (pre-crack) initialization, auto UX anchor, GiD
   `.msh`/`.res` export, CPU-only fallbacks when torch/matplotlib are absent.
+
+## Architecture roadmap (extension seams)
+
+- **Single numerical core**: all kernels now live in the installable `src` package;
+  the v2/v1 drivers and the DAT-driven FEA solver are thin orchestrators over it.
+- Planned seams kept open (see `docs/` theory and `src/solver.py::BaseCrackSolver`):
+  matrix-free **Term B** (neural damage gradient) inside the linear operator,
+  element-wise `torch.vmap` parallelism, multi-crack / 3D extensions, and batch
+  parameterized runs. These are API-compatible next steps rather than rewrites.
 
 ## Artifacts & versioning policy
 

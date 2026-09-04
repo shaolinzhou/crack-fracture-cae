@@ -1,17 +1,12 @@
-from __future__ import annotations
-
 """
 PCG 求解器演示 — 验证 Matrix-Free PCG 与 spsolve 结果一致性
 =============================================================
-用法: python examples/run_pcg_demo.py
+用法: python -m src.pcg_demo
 """
+from __future__ import annotations
 
 import logging
-import sys
 import time
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 

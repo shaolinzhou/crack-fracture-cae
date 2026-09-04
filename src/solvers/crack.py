@@ -14,7 +14,6 @@ Phase 2 (耦合): NN 预测 d(x), Germano 自监督, 标度修正损伤演化
 
 import os
 import sys
-from pathlib import Path
 
 # 兼容非 UTF-8 控制台（如 Windows GBK）：Unicode 输出不崩溃
 try:
@@ -38,9 +37,8 @@ os.makedirs("snapshots/coupled", exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # 单一实现收敛 (P0-1): 全部数值内核由共享库 src/ 提供, 本文件仅保留驱动逻辑
+# 包内导入 (python -m src.solvers.crack / 安装后 crack-cae)
 # ---------------------------------------------------------------------------
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
 from src.damage_models import compute_damage_base as _compute_damage_base  # noqa: E402
 from src.fem_utils import (  # noqa: E402
     plane_strain_C,

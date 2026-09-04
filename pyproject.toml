@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "crack-fracture-cae"
 version = "2.0.0"
@@ -19,6 +23,16 @@ dev = [
     "mypy>=1.0",
 ]
 
+[project.scripts]
+crack-cae = "src.cli:crack_v2"
+crack-cae-v1 = "src.cli:crack_v1"
+crack-pcg-demo = "src.cli:pcg_demo"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+exclude = ["tests*", "FEA*"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
@@ -32,9 +46,8 @@ select = ["E", "F", "W"]
 extend-ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"solvers/*.py" = ["E701", "E702"]
-"experimental/*.py" = ["E701", "E702", "E402"]
-"examples/run_pcg_demo.py" = ["E402"]
+"src/solvers/*.py" = ["E701", "E702"]
+"src/experimental/*.py" = ["E701", "E702", "E402"]
 
 [tool.mypy]
 python_version = "3.10"

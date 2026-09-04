@@ -37,7 +37,11 @@ from dat_parser import DatModel
 
 
 # 单一实现收敛 (P0-1): 数值内核由共享库 src/ 提供
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# 已安装为包时无需改 sys.path; 否则回退到仓库根
+try:
+    from src import config as _src_probe  # noqa: F401
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.config import SolverConfig  # noqa: E402
 from src.damage_models import (  # noqa: E402

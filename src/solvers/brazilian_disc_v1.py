@@ -19,8 +19,6 @@ try:
 except Exception:
     pass
 
-from pathlib import Path
-
 import numpy as np
 import torch
 import torch.optim as optim
@@ -31,9 +29,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# 单一实现收敛 (P0-1): 数值内核由共享库 src/ 提供
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+# 单一实现收敛 (P0-1): 数值内核由共享库 src/ 提供 (包内导入, 无 sys.path hack)
 from src.damage_models import mazars_damage_target  # noqa: E402
 from src.fem_utils import (  # noqa: E402
     mazars_equivalent_strain,
