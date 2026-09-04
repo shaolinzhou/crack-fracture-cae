@@ -14,6 +14,7 @@ Phase 2 (耦合): NN 预测 d(x), Germano 自监督, 标度修正损伤演化
 
 import os
 import sys
+from pathlib import Path
 
 # 兼容非 UTF-8 控制台（如 Windows GBK）：Unicode 输出不崩溃
 try:
@@ -27,62 +28,41 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
-from scipy.ndimage import uniform_filter
 
 import torch
-import torch.nn as nn
 import torch.optim as optim
 
 os.makedirs("snapshots", exist_ok=True)
 os.makedirs("snapshots/coupled", exist_ok=True)
 
 
-# ===========================================================================
-# 1. 物理引擎基座
-# ===========================================================================
-def plane_strain_C(E, nu):
-    f = E / ((1 + nu) * (1 - 2 * nu))
-    return np.array([[f*(1-nu), f*nu, 0], [f*nu, f*(1-nu), 0], [0, 0, f*(1-2*nu)/2]])
+# ---------------------------------------------------------------------------
+# 单一实现收敛 (P0-1): 全部数值内核由共享库 src/ 提供, 本文件仅保留驱动逻辑
+# ---------------------------------------------------------------------------
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-def q4_stiffness_template(dx, dy, C):
-    gp = [-1/np.sqrt(3), 1/np.sqrt(3)]
-    k0 = np.zeros((8,8))
-    for xi in gp:
-        for eta in gp:
-            dNdxi = np.array([-(1-eta),(1-eta),(1+eta),-(1+eta)])*0.25
-            dNdeta = np.array([-(1-xi),-(1+xi),(1+xi),(1-xi)])*0.25
-            dNdx, dNdy = dNdxi/(dx/2), dNdeta/(dy/2)
-            B = np.zeros((3,8))
-            for i in range(4):
-                B[0,2*i]=dNdx[i]; B[1,2*i+1]=dNdy[i]; B[2,2*i]=dNdy[i]; B[2,2*i+1]=dNdx[i]
-            k0 += B.T @ C @ B * dx*dy/4
-    return k0
-
-def b_matrix_center(dx, dy):
-    dNdx = np.array([-1,1,1,-1])/(2*dx)
-    dNdy = np.array([-1,-1,1,1])/(2*dy)
-    B = np.zeros((3,8))
-    for i in range(4):
-        B[0,2*i]=dNdx[i]; B[1,2*i+1]=dNdy[i]; B[2,2*i]=dNdy[i]; B[2,2*i+1]=dNdx[i]
-    return B
+from src.damage_models import compute_damage_base as _compute_damage_base  # noqa: E402
+from src.fem_utils import (  # noqa: E402
+    plane_strain_C,
+    rect_b_matrix_center as b_matrix_center,
+    rect_q4_stiffness_template as q4_stiffness_template,
+)
+from src.networks import (  # noqa: E402
+    PhysicsScaleNetSolid,
+    compute_features as _compute_features,
+    compute_germano_signal as _compute_germano_signal,
+    compute_loss as _compute_loss,
+)
 
 
 # ===========================================================================
-# 2. PhysicsScaleNet — 标度指数预测器 (Term B)
+# 1. 物理引擎基座 (数值内核来自 src.fem_utils)
 # ===========================================================================
-class PhysicsScaleNetSolid(nn.Module):
-    """从局部力学不变量 (D, η, θ̄, ε_norm, g_D) 预测标度指数 d(x).
-       输出: d(x) ∈ (-∞, -0.5]  — 弹性锚点 d=-0.5"""
-    def __init__(self, input_dim=5, hidden_dim=32):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim), nn.Tanh(),
-            nn.Linear(hidden_dim, 1))
-        nn.init.constant_(self.net[-1].bias, -5.0)  # 初始 d≈-0.5
 
-    def forward(self, x):
-        return -0.5 - nn.functional.softplus(self.net(x))
+
+# ===========================================================================
+# 2. PhysicsScaleNet — 标度指数预测器 (Term B, 来自 src.networks)
+# ===========================================================================
 
 
 # ===========================================================================
@@ -264,120 +244,46 @@ class CrackSolver:
         self.stresses = (self.strains @ self.C.T)*(1-self.D)[:,None]
 
     # =====================================================================
-    # III. Mazars 损伤 (非局部 + 自适应阻尼 + eps 上限放宽)
+    # III. Mazars 损伤 (非局部 + 自适应阻尼 + eps 上限放宽) → src.damage_models
     # =====================================================================
     def compute_damage_base(self, phase="warmup"):
-        exx, eyy, exy = self.strains[:,0], self.strains[:,1], self.strains[:,2]*0.5
-        e_avg = 0.5*(exx+eyy); e_diff = np.sqrt((0.5*(exx-eyy))**2+exy**2)
-        eps_eq = np.sqrt(np.maximum(e_avg+e_diff,0)**2+np.maximum(e_avg-e_diff,0)**2)
-
-        if self.nonlocal_radius > 0:
-            eps_grid = np.zeros((self.Ny-1, self.Nx-1))
-            for idx, e in enumerate(self.active):
-                j,i = self.elem_ji[e]; eps_grid[j,i] = eps_eq[idx]
-            eps_nl = uniform_filter(eps_grid, size=2*self.nonlocal_radius+1, mode='constant', cval=0)
-            for idx, e in enumerate(self.active):
-                j,i = self.elem_ji[e]; eps_eq[idx] = eps_nl[j,i]
-
-        eps_clip = np.clip(eps_eq, 0, self.eps_eq_cap)
-        arg = np.clip(self.beta_soft*(eps_clip-self.eps0), 0, self.exp_clip)
-        D_target = np.where(eps_clip>self.eps0,
-                            1-(self.eps0/(eps_clip+1e-30))*np.exp(-arg), 0.0)
-
-        driving = np.maximum(D_target-self.D, 0)
-        if phase == "warmup":
-            # 预热阶段: 统一低阻尼, 防止级联扩散
-            adaptive_damping = np.full_like(driving, self.damping_warmup)
-        else:
-            # 耦合阶段: 自适应阻尼 (尖端加速, 远场稳定)
-            adaptive_damping = np.where(driving>0.1, self.damping_fast, self.damping_base)
-        return driving*adaptive_damping, eps_eq
+        delta_D, eps_eq = _compute_damage_base(
+            self.strains, self.D, self.eps0, self.beta_soft, self.eps_eq_cap,
+            self.exp_clip, self.damping_warmup, self.damping_base, self.damping_fast,
+            phase, eps_eq_grid=np.zeros((self.Ny - 1, self.Nx - 1)),
+            nonlocal_radius=self.nonlocal_radius,
+            active_elem_indices=self.active, elem_ji=self.elem_ji,
+            Ny=self.Ny - 1, Nx=self.Nx - 1,
+        )
+        return delta_D, eps_eq
 
     # =====================================================================
-    # IV. 特征提取 — 5D 力学不变量 → NN 输入
+    # IV. 特征提取 — 5D 力学不变量 → NN 输入 (→ src.networks)
     # =====================================================================
     def compute_features(self):
-        sxx, syy, sxy = self.stresses[:,0], self.stresses[:,1], self.stresses[:,2]
-        szz = self.nu*(sxx+syy)
-        sm = (sxx+syy+szz)/3; Sxx, Syy, Szz = sxx-sm, syy-sm, szz-sm
-        J2 = 0.5*(Sxx**2+Syy**2+Szz**2)+sxy**2
-        seq = np.sqrt(3*J2+1e-30)
-        eta = sm/(seq+1e-12)
-        J3 = Sxx*Syy*Szz - Szz*sxy**2
-        cos_arg = np.clip(27*J3/(2*seq**3+1e-30), -1, 1)
-        theta_bar = 1-(2/np.pi)*np.arccos(cos_arg)
-        exx, eyy, exy2 = self.strains[:,0], self.strains[:,1], self.strains[:,2]*0.5
-        e_avg=0.5*(exx+eyy); e_diff=np.sqrt((0.5*(exx-eyy))**2+exy2**2)
-        eps_eq = np.sqrt(np.maximum(e_avg+e_diff,0)**2+np.maximum(e_avg-e_diff,0)**2)
-
-        D_grid = np.zeros((self.Ny-1, self.Nx-1))
-        for idx,e in enumerate(self.active):
-            j,i = self.elem_ji[e]; D_grid[j,i] = self.D[idx]
-        gdy, gdx = np.gradient(D_grid, self.dy, self.dx)
-        grad_mag = np.sqrt(gdx**2+gdy**2)
-        gD_arr = np.zeros(self.n_active)
-        for idx,e in enumerate(self.active):
-            j,i = self.elem_ji[e]; gD_arr[idx] = self.l_c*grad_mag[j,i]
-
-        F_np = np.stack([self.D, np.tanh(eta), np.tanh(theta_bar),
-                         np.tanh(eps_eq/self.eps0-1), np.tanh(gD_arr)], axis=1)
-        return torch.tensor(F_np, dtype=torch.float32)
+        return _compute_features(
+            self.D, self.strains, self.stresses, self.nu, self.eps0, self.l_c,
+            self.Ny - 1, self.Nx - 1, self.active, self.elem_ji, self.dx, self.dy,
+        )
 
     # =====================================================================
-    # V. Germano 自监督信号
+    # V. Germano 自监督信号 (→ src.networks)
     # =====================================================================
     def compute_germano_signal(self, delta_D_base):
-        exx, eyy, exy2 = self.strains[:,0], self.strains[:,1], self.strains[:,2]*0.5
-        W = 0.5*(self.stresses[:,0]*exx+self.stresses[:,1]*eyy+2*self.stresses[:,2]*exy2)
-        Y = W/((1-self.D)**2+1e-30)
-        phi = Y*delta_D_base
-
-        phi_grid = np.zeros((self.Ny-1, self.Nx-1))
-        for idx,e in enumerate(self.active):
-            j,i = self.elem_ji[e]; phi_grid[j,i] = phi[idx]
-        phi_test = uniform_filter(phi_grid, size=3, mode='constant', cval=0)*9/9
-
-        H_arr = np.zeros(self.n_active); w_arr = np.zeros(self.n_active)
-        for idx,e in enumerate(self.active):
-            j,i = self.elem_ji[e]
-            p_local = phi_grid[j,i]
-            if p_local > 1e-15:
-                H_arr[idx] = phi_test[j,i]/p_local
-                w_arr[idx] = p_local
-        return H_arr, w_arr, phi, phi_test
+        return _compute_germano_signal(
+            self.strains, self.stresses, self.D, delta_D_base,
+            self.Ny - 1, self.Nx - 1, self.active, self.elem_ji,
+        )
 
     # =====================================================================
-    # VI. 混合损失函数 (5 项)
+    # VI. 混合损失函数 (5 项, → src.networks)
     # =====================================================================
     def compute_loss(self, d_pred, phi_grid_flat, phi_test_flat):
-        lambda_L = 3.0
-        phi_g_t = torch.tensor(phi_grid_flat, dtype=torch.float32).unsqueeze(1)
-        phi_t_t = torch.tensor(phi_test_flat, dtype=torch.float32).unsqueeze(1)
-        pred_ratio = lambda_L**d_pred
-        loss_g = torch.sum((pred_ratio*phi_g_t-phi_t_t)**2)/(torch.sum(phi_g_t**2)+1e-15)
-
-        D_t = torch.tensor(self.D, dtype=torch.float32).unsqueeze(1)
-        mask_e = (D_t<0.01).float()
-        loss_e = torch.sum(mask_e*(d_pred-(-0.5))**2)/(mask_e.sum()+1e-15)
-
-        mask_f = (D_t>0.9).float()
-        loss_f = torch.sum(mask_f*torch.exp(2*d_pred))/(mask_f.sum()+1e-15)
-
-        D_np = np.clip(self.D.copy(), 0, 0.999)
-        f_const = -0.5+np.log(1-D_np)*0.3
-        f_t = torch.tensor(f_const, dtype=torch.float32).unsqueeze(1)
-        loss_d = torch.mean((d_pred-f_t)**2)
-
-        d_grid_flat = torch.full(((self.Ny-1)*(self.Nx-1),), -0.5, dtype=torch.float32)
-        d_grid_flat[torch.tensor(self.active)] = d_pred.squeeze()
-        d_grid = d_grid_flat.view(self.Ny-1, self.Nx-1)
-        gdx = (d_grid[:,1:]-d_grid[:,:-1])/self.dx
-        gdy = (d_grid[1:,:]-d_grid[:-1,:])/self.dy
-        loss_s = self.l_d**2*(torch.mean(gdx**2)+torch.mean(gdy**2))
-
-        loss_total = (self.lam_g*loss_g+self.lam_e*loss_e+
-                      self.lam_f*loss_f+self.lam_d*loss_d+self.lam_s*loss_s)
-        return loss_total, loss_g, loss_e, loss_f, loss_s
+        return _compute_loss(
+            d_pred, self.D, phi_grid_flat, phi_test_flat, 3.0,
+            self.lam_g, self.lam_e, self.lam_f, self.lam_d, self.lam_s,
+            self.l_d, self.dx, self.dy, self.Ny - 1, self.Nx - 1, self.active,
+        )
 
     # =====================================================================
     # VII. 标度修正损伤更新

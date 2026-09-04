@@ -19,97 +19,39 @@ try:
 except Exception:
     pass
 
+from pathlib import Path
+
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import spsolve
-from scipy.ndimage import convolve
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+# 单一实现收敛 (P0-1): 数值内核由共享库 src/ 提供
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# ===========================================================================
-# 0. 内嵌 PhysicsScaleNet — 固体版
-# ===========================================================================
-class PhysicsScaleNetSolid(nn.Module):
-    """从局部力学不变量 (D, η, θ̄, ε_norm, g_D) 预测标度指数 d(x).
-
-    输出: d(x) ∈ (-∞, -0.5]
-    """
-    def __init__(self, input_dim=5, hidden_dim=32):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, 1),
-        )
-        # 初始化最后一层偏置为负值, 使初始 d ≈ -0.5 (弹性锚点)
-        nn.init.constant_(self.net[-1].bias, -5.0)
-
-    def forward(self, x):
-        raw = self.net(x)
-        # softplus 保证 d ≤ -0.5
-        d = -0.5 - torch.nn.functional.softplus(raw)
-        return d
+from src.damage_models import mazars_damage_target  # noqa: E402
+from src.fem_utils import (  # noqa: E402
+    mazars_equivalent_strain,
+    plane_strain_C,
+    rect_b_matrix_center as b_matrix_center,
+    rect_q4_stiffness_template as q4_stiffness_template,
+)
+from src.networks import (  # noqa: E402
+    PhysicsScaleNetSolid,
+    compute_features as _compute_features,
+    compute_germano_signal as _compute_germano_signal,
+    compute_loss as _compute_loss,
+)
 
 
 # ===========================================================================
-# 1. 平面应变 Q4 有限元工具
-# ===========================================================================
-def plane_strain_C(E, nu):
-    """平面应变弹性矩阵 C (Voigt: [σ_xx, σ_yy, σ_xy])."""
-    f = E / ((1 + nu) * (1 - 2 * nu))
-    C = np.array([
-        [f * (1 - nu), f * nu,       0.0],
-        [f * nu,       f * (1 - nu), 0.0],
-        [0.0,          0.0,          f * (1 - 2 * nu) / 2.0]
-    ])
-    return C
-
-
-def q4_stiffness_template(dx, dy, C):
-    """计算单个矩形 Q4 单元的刚度矩阵 (2×2 高斯积分)."""
-    gp = [-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)]
-    a, b = dx / 2.0, dy / 2.0
-    k0 = np.zeros((8, 8))
-    for xi in gp:
-        for eta in gp:
-            dN_dxi = np.array([-(1-eta), (1-eta), (1+eta), -(1+eta)]) * 0.25
-            dN_deta = np.array([-(1-xi), -(1+xi), (1+xi), (1-xi)]) * 0.25
-            dN_dx = dN_dxi / a
-            dN_dy = dN_deta / b
-            B = np.zeros((3, 8))
-            for i in range(4):
-                B[0, 2*i]     = dN_dx[i]
-                B[1, 2*i + 1] = dN_dy[i]
-                B[2, 2*i]     = dN_dy[i]
-                B[2, 2*i + 1] = dN_dx[i]
-            k0 += B.T @ C @ B * a * b
-    return k0
-
-
-def b_matrix_center(dx, dy):
-    """单元中心 (ξ=0,η=0) 处的 B 矩阵."""
-    dNdx = np.array([-1, 1, 1, -1]) / (2.0 * dx)
-    dNdy = np.array([-1, -1, 1, 1]) / (2.0 * dy)
-    B = np.zeros((3, 8))
-    for i in range(4):
-        B[0, 2*i]     = dNdx[i]
-        B[1, 2*i + 1] = dNdy[i]
-        B[2, 2*i]     = dNdy[i]
-        B[2, 2*i + 1] = dNdx[i]
-    return B
-
-
-# ===========================================================================
-# 2. 巴西圆盘劈裂求解器
+# 巴西圆盘劈裂求解器 (数值内核来自 src.fem_utils / src.damage_models /
+# src.networks; 本文件仅保留 v1 驱动逻辑)
 # ===========================================================================
 class BrazilianDiscSolver:
     """巴西圆盘劈裂 — 显式 FEM + 尺度不变算子代数闭合."""
@@ -362,167 +304,45 @@ class BrazilianDiscSolver:
         self.stresses = sig_undamaged * (1 - self.D)[:, None]
 
     # =====================================================================
-    # III. Mazars 损伤基准增量
+    # III. Mazars 损伤基准增量 (数值内核 → src.damage_models / src.fem_utils)
     # =====================================================================
     def compute_damage_base(self):
-        """Mazars 脆性损伤: 等效拉应变准则."""
-        exx = self.strains[:, 0]
-        eyy = self.strains[:, 1]
+        """Mazars 脆性损伤: 等效拉应变准则 (v1 语义: 无阻尼/无上限)."""
         exy = self.strains[:, 2] * 0.5   # gxy → exy
-
-        # 主应变
-        e_avg = 0.5 * (exx + eyy)
-        e_diff = np.sqrt((0.5 * (exx - eyy))**2 + exy**2)
-        e1 = e_avg + e_diff
-        e2 = e_avg - e_diff
-
-        # Mazars 等效拉应变 (Macaulay bracket)
-        eps_eq = np.sqrt(np.maximum(e1, 0)**2 + np.maximum(e2, 0)**2)
-
-        # 损伤目标值
-        D_target = np.where(
-            eps_eq > self.eps0,
-            1.0 - (self.eps0 / (eps_eq + 1e-30)) * np.exp(
-                -self.beta_soft * (eps_eq - self.eps0)),
-            0.0
-        )
+        eps_eq = mazars_equivalent_strain(self.strains[:, 0], self.strains[:, 1], exy)
+        D_target = mazars_damage_target(eps_eq, self.eps0, self.beta_soft, 1e300, exp_clip=1e300)
         delta_D = np.maximum(0.0, D_target - self.D)
         return delta_D, eps_eq
 
     # =====================================================================
-    # IV. 特征提取 (5D 不变量)
+    # IV. 特征提取 (5D 不变量, → src.networks)
     # =====================================================================
     def compute_features(self):
-        sxx = self.stresses[:, 0]
-        syy = self.stresses[:, 1]
-        sxy = self.stresses[:, 2]
-        szz = self.nu * (sxx + syy)   # 平面应变 out-of-plane 应力
-
-        # 应力不变量 (3D)
-        sm = (sxx + syy + szz) / 3.0
-        Sxx, Syy, Szz = sxx - sm, syy - sm, szz - sm
-        J2 = 0.5 * (Sxx**2 + Syy**2 + Szz**2) + sxy**2
-        seq = np.sqrt(3.0 * J2 + 1e-30)
-
-        eta = sm / (seq + 1e-12)                   # 三轴度
-        J3 = Sxx * Syy * Szz - Szz * sxy**2
-        cos_arg = np.clip(27 * J3 / (2 * seq**3 + 1e-30), -1, 1)
-        theta_bar = 1.0 - (2.0 / np.pi) * np.arccos(cos_arg)  # Lode 角
-
-        # 等效拉应变 (已在 compute_damage_base 中计算, 此处重新计算)
-        exx = self.strains[:, 0]
-        eyy = self.strains[:, 1]
-        exy = self.strains[:, 2] * 0.5
-        e_avg = 0.5 * (exx + eyy)
-        e_diff = np.sqrt((0.5*(exx-eyy))**2 + exy**2)
-        eps_eq = np.sqrt(np.maximum(e_avg+e_diff, 0)**2 +
-                         np.maximum(e_avg-e_diff, 0)**2)
-
-        # 损伤场空间梯度
-        Ne_x = self.Nx - 1
-        D_grid = np.zeros((self.Ny - 1, Ne_x))
-        for idx, e in enumerate(self.active):
-            j, i = self.elem_ji[e]
-            D_grid[j, i] = self.D[idx]
-        gdy, gdx = np.gradient(D_grid, self.dy, self.dx)
-        grad_mag = np.sqrt(gdx**2 + gdy**2)
-
-        # 组装特征
-        f1 = self.D
-        f2 = np.tanh(eta)
-        f3 = np.tanh(theta_bar)
-        f4 = np.tanh(eps_eq / self.eps0 - 1.0)
-        gD_arr = np.zeros(self.n_active)
-        for idx, e in enumerate(self.active):
-            j, i = self.elem_ji[e]
-            gD_arr[idx] = self.l_c * grad_mag[j, i]
-        f5 = np.tanh(gD_arr)
-
-        F_np = np.stack([f1, f2, f3, f4, f5], axis=1)
-        return torch.tensor(F_np, dtype=torch.float32)
+        return _compute_features(
+            self.D, self.strains, self.stresses, self.nu, self.eps0, self.l_c,
+            self.Ny - 1, self.Nx - 1, self.active, self.elem_ji, self.dx, self.dy,
+        )
 
     # =====================================================================
-    # V. Germano 自监督信号
+    # V. Germano 自监督信号 (→ src.networks; 保留 v1 的 (H, w) 返回约定)
     # =====================================================================
     def compute_germano_signal(self, delta_D_base):
         """双滤波耗散功差 → H_solid."""
-        Ne_x = self.Nx - 1
-        # 耗散功密度 φ = Y · ΔD
-        # 驱动力 Y ≈ 弹性应变能密度 / (1-D)²
-        exx = self.strains[:, 0]
-        eyy = self.strains[:, 1]
-        exy = self.strains[:, 2] * 0.5
-        W = 0.5 * (self.stresses[:, 0] * exx + self.stresses[:, 1] * eyy
-                    + 2 * self.stresses[:, 2] * exy)
-        Y = W / ((1 - self.D)**2 + 1e-30)
-        phi = Y * delta_D_base       # 基准耗散功密度
-
-        # 映射到网格
-        phi_grid = np.zeros((self.Ny - 1, Ne_x))
-        for idx, e in enumerate(self.active):
-            j, i = self.elem_ji[e]
-            phi_grid[j, i] = phi[idx]
-
-        # 3×3 盒式滤波 (test filter)
-        kernel = np.ones((3, 3)) / 9.0
-        phi_test = convolve(phi_grid, kernel, mode="constant", cval=0.0)
-
-        # 提取 H_solid = φ_test / φ_grid (仅在 φ_grid 显著区域有效)
-        H_arr = np.zeros(self.n_active)
-        w_arr = np.zeros(self.n_active)
-        for idx, e in enumerate(self.active):
-            j, i = self.elem_ji[e]
-            p_local = phi_grid[j, i]
-            if p_local > 1e-15:
-                H_arr[idx] = phi_test[j, i] / p_local
-                w_arr[idx] = p_local  # 权重 = 耗散量
-
+        H_arr, w_arr, _, _ = _compute_germano_signal(
+            self.strains, self.stresses, self.D, delta_D_base,
+            self.Ny - 1, self.Nx - 1, self.active, self.elem_ji,
+        )
         return H_arr, w_arr
 
     # =====================================================================
-    # VI. 混合损失函数 (5 项)
+    # VI. 混合损失函数 (5 项, → src.networks)
     # =====================================================================
     def compute_loss(self, d_pred, phi_grid_flat, phi_test_flat):
-        lambda_L = 3.0   # test/grid 尺度比
-
-        # 1. 稳定的 Germano 损失 (无除法形式)
-        phi_g_t = torch.tensor(phi_grid_flat, dtype=torch.float32).unsqueeze(1)
-        phi_t_t = torch.tensor(phi_test_flat, dtype=torch.float32).unsqueeze(1)
-        pred_ratio = lambda_L ** d_pred   # 3^d
-        loss_g = torch.sum((pred_ratio * phi_g_t - phi_t_t)**2) / (torch.sum(phi_g_t**2) + 1e-15)
-
-        # 2. 弹性锚点: D < 0.01 → d = -0.5
-        D_t = torch.tensor(self.D, dtype=torch.float32).unsqueeze(1)
-        mask_e = (D_t < 0.01).float()
-        loss_e = torch.sum(mask_e * (d_pred - (-0.5))**2) / (mask_e.sum() + 1e-15)
-
-        # 3. 断裂锚点: D > 0.9 → exp(2d) → 0
-        mask_f = (D_t > 0.9).float()
-        loss_f = torch.sum(mask_f * torch.exp(2.0 * d_pred)) / (mask_f.sum() + 1e-15)
-
-        # 4. 本构先验: d ≈ -0.5 + ln(1-D) * c1
-        c1 = 0.3
-        D_np = self.D.copy()
-        D_np = np.clip(D_np, 0, 0.999)
-        f_const = -0.5 + np.log(1.0 - D_np) * c1
-        f_t = torch.tensor(f_const, dtype=torch.float32).unsqueeze(1)
-        loss_d = torch.mean((d_pred - f_t)**2)
-
-        # 5. 空间平滑 (支持反向传播)
-        Ne_x = self.Nx - 1
-        Ne_y = self.Ny - 1
-        d_grid_flat = torch.full((Ne_y * Ne_x, 1), -0.5, dtype=torch.float32)
-        d_grid_flat[self.active] = d_pred
-        d_grid = d_grid_flat.view(Ne_y, Ne_x)
-
-        gdx = (d_grid[:, 1:] - d_grid[:, :-1]) / self.dx
-        gdy = (d_grid[1:, :] - d_grid[:-1, :]) / self.dy
-        loss_s = self.l_d**2 * (torch.mean(gdx**2) + torch.mean(gdy**2))
-
-        loss_total = (self.lam_g * loss_g + self.lam_e * loss_e +
-                      self.lam_f * loss_f + self.lam_d * loss_d +
-                      self.lam_s * loss_s)
-        return loss_total, loss_g, loss_e, loss_f, loss_s
+        return _compute_loss(
+            d_pred, self.D, phi_grid_flat, phi_test_flat, 3.0,
+            self.lam_g, self.lam_e, self.lam_f, self.lam_d, self.lam_s,
+            self.l_d, self.dx, self.dy, self.Ny - 1, self.Nx - 1, self.active,
+        )
 
     # =====================================================================
     # VII. 损伤更新 (含 (1-D) 饱和约束)
@@ -568,26 +388,11 @@ class BrazilianDiscSolver:
         feats = self.compute_features()
         d_pred = self.nn(feats)
 
-        # 3. 计算耗散功密度 phi
-        exx = self.strains[:, 0]
-        eyy = self.strains[:, 1]
-        exy = self.strains[:, 2] * 0.5   # gxy → exy
-        W = 0.5 * (self.stresses[:, 0] * exx + self.stresses[:, 1] * eyy
-                    + 2 * self.stresses[:, 2] * exy)
-        Y = W / ((1 - self.D)**2 + 1e-30)
-        phi = Y * delta_D       # 基准耗散功密度
-
-        # 4. 映射到网格并进行 3x3 盒式测试滤波
-        Ne_x = self.Nx - 1
-        phi_grid = np.zeros((self.Ny - 1, Ne_x))
-        for idx, e in enumerate(self.active):
-            j, i = self.elem_ji[e]
-            phi_grid[j, i] = phi[idx]
-
-        kernel = np.ones((3, 3)) / 9.0
-        phi_test = convolve(phi_grid, kernel, mode="constant", cval=0.0)
-
-        # 5. 提取活性单元对应的展平数组
+        # 3-5. 耗散信号 + 3×3 测试滤波 (→ src.networks)
+        _, _, phi, phi_test = _compute_germano_signal(
+            self.strains, self.stresses, self.D, delta_D,
+            self.Ny - 1, self.Nx - 1, self.active, self.elem_ji,
+        )
         phi_grid_flat = phi
         phi_test_flat = np.zeros(self.n_active)
         for idx, e in enumerate(self.active):
