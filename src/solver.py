@@ -1,22 +1,14 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import numpy as np
 import torch
 
 from src.config import SolverConfig
-from src.fem_utils import (
-    plane_strain_C,
-    rect_q4_stiffness_template,
-    rect_b_matrix_center,
-    mazars_equivalent_strain,
-    von_mises_stress,
-)
 from src.damage_models import compute_damage_base
-from src.networks import PhysicsScaleNetSolid, compute_features, compute_germano_signal, compute_loss
-from src.pcg import MatrixFreeOperator, pcg_solve
+from src.networks import PhysicsScaleNetSolid
+from src.pcg import MatrixFreeOperator
 
 logger = logging.getLogger(__name__)
 

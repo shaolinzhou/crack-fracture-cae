@@ -169,7 +169,7 @@ class BrazilianDiscSolver:
                     in_flat = abs(yc - self.Yc) <= (R - flat_height)
                 else:
                     in_flat = True
-                
+
                 if in_circle and in_flat:
                     e = j * Ne_x + i
                     self.active.append(e)
@@ -237,11 +237,11 @@ class BrazilianDiscSolver:
         self.bottom_nodes = []
         self.top_center_node = None
         self.bottom_center_node = None
-        
+
         min_top_dist = 1e9
         min_bot_dist = 1e9
         hw = loading_half_width
-        
+
         for i in range(Nx):
             xn = self.x_node[i]
             if abs(xn - self.Xc) > hw:
@@ -306,24 +306,24 @@ class BrazilianDiscSolver:
         K_pen = 1e10 * self.E
         F = np.zeros(self.N_dof)
         bc_r, bc_c, bc_v = [], [], []
-        
+
         # Bottom nodes: constrain uy = 0 (allow sliding in ux)
         for n in self.bottom_nodes:
             bc_r.append(2*n+1); bc_c.append(2*n+1); bc_v.append(K_pen)
             F[2*n+1] += K_pen * 0.0
-            
+
         # Top nodes: constrain uy = -disp_val (allow sliding in ux)
         for n in self.top_nodes:
             bc_r.append(2*n+1); bc_c.append(2*n+1); bc_v.append(K_pen)
             F[2*n+1] += K_pen * (-disp_val)
-            
+
         # Constrain ux = 0 only at the center top and bottom contact nodes to prevent rigid body motion
         if self.bottom_center_node is not None:
             bc_r.append(2*self.bottom_center_node)
             bc_c.append(2*self.bottom_center_node)
             bc_v.append(K_pen)
             F[2*self.bottom_center_node] += K_pen * 0.0
-            
+
         if self.top_center_node is not None:
             bc_r.append(2*self.top_center_node)
             bc_c.append(2*self.top_center_node)
@@ -474,7 +474,6 @@ class BrazilianDiscSolver:
     # VI. 混合损失函数 (5 项)
     # =====================================================================
     def compute_loss(self, d_pred, phi_grid_flat, phi_test_flat):
-        n = self.n_active
         lambda_L = 3.0   # test/grid 尺度比
 
         # 1. 稳定的 Germano 损失 (无除法形式)
@@ -506,7 +505,7 @@ class BrazilianDiscSolver:
         d_grid_flat = torch.full((Ne_y * Ne_x, 1), -0.5, dtype=torch.float32)
         d_grid_flat[self.active] = d_pred
         d_grid = d_grid_flat.view(Ne_y, Ne_x)
-        
+
         gdx = (d_grid[:, 1:] - d_grid[:, :-1]) / self.dx
         gdy = (d_grid[1:, :] - d_grid[:-1, :]) / self.dy
         loss_s = self.l_d**2 * (torch.mean(gdx**2) + torch.mean(gdy**2))
@@ -635,6 +634,10 @@ class BrazilianDiscSolver:
 # ===========================================================================
 if __name__ == "__main__":
     # ── 参数 (来自用户提供的砂岩/石灰岩典型值) ──
+    # 统一随机种子（NN 在线训练可复现）
+    torch.manual_seed(2026)
+    np.random.seed(2026)
+
     solver = BrazilianDiscSolver(
         Nx=80, Ny=80,
         L_domain=60.0,         # 计算域 60×60 mm
@@ -665,7 +668,7 @@ if __name__ == "__main__":
 
     total_steps = solver.n_warmup + solver.n_coupled
     print(f"\n{'='*60}")
-    print(f"  巴西圆盘劈裂 — 显式 FEM + 尺度不变算子代数 v1.0")
+    print("  巴西圆盘劈裂 — 显式 FEM + 尺度不变算子代数 v1.0")
     print(f"{'='*60}")
     print(f"  网格: {solver.Nx}×{solver.Ny}, 活性单元: {solver.n_active}")
     print(f"  材料: E={solver.E:.0f} MPa, ν={solver.nu}, σ_t={solver.sigma_t} MPa")

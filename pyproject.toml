@@ -14,6 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
+    "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.0",
 ]
@@ -24,6 +25,15 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W"]
+# Line length is deliberately relaxed for numeric/one-per-line-heavy code.
+# E701/E702 (multiple statements per line) remain enabled for the shared
+# library (src/) but are tolerated in legacy driver scripts under solvers/
+# until the P0-1 single-implementation refactor rewrites them.
+extend-ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"solvers/*.py" = ["E701", "E702"]
+"examples/run_pcg_demo.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.10"

@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 
 
 class PhysicsScaleNetSolid(nn.Module):
@@ -141,8 +140,6 @@ def compute_loss(
 
     Returns (loss_total, loss_g, loss_e, loss_f, loss_s).
     """
-    n_active = len(active_indices)
-
     phi_g_t = torch.tensor(phi, dtype=torch.float32).unsqueeze(1)
     phi_t_t = torch.tensor(phi_test, dtype=torch.float32).unsqueeze(1)
     pred_ratio = lambda_L ** d_pred

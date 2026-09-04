@@ -12,7 +12,7 @@ Phase 2 (耦合): NN 预测 d(x), Germano 自监督, 标度修正损伤演化
 输出: snapshots/step_XXX.png + snapshots/coupled/step_XXX.png
 """
 
-import os, sys
+import os
 import numpy as np
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -558,6 +558,10 @@ if __name__ == "__main__":
     # NN: hidden=32, lr=2e-3, Lamé 损失权重
     # ═══════════════════════════════════════════════════════════════════
 
+    # 统一随机种子（NN 在线训练可复现）
+    torch.manual_seed(2026)
+    np.random.seed(2026)
+
     solver = CrackSolver(
         Nx=80, Ny=80, L_domain=60.0, R=25.0, flat_height=0.4,
         E=30000.0, nu=0.25, sigma_t=6.0, K_Ic=31.62,
@@ -570,8 +574,8 @@ if __name__ == "__main__":
 
     total = solver.total_steps
     print(f"\n{'='*60}")
-    print(f"  巴西圆盘劈裂 — 尺度不变混合 CAE 求解器 v2.0")
-    print(f"  架构: 符号物理 (Term A) + NN标度修正 (Term B) + Germano自监督")
+    print("  巴西圆盘劈裂 — 尺度不变混合 CAE 求解器 v2.0")
+    print("  架构: 符号物理 (Term A) + NN标度修正 (Term B) + Germano自监督")
     print(f"  数值: k_res={solver.residual_stiffness:.0e}  "
           f"warmup_damp={solver.damping_warmup}  "
           f"coupled_damp={solver.damping_base}/{solver.damping_fast}  "
@@ -609,6 +613,6 @@ if __name__ == "__main__":
             solver.visualize(t+1, disp, is_warmup)
 
     solver.plot_load_displacement()
-    print(f"\n  仿真完成。预热图 → snapshots/step_*.png")
-    print(f"  耦合图 → snapshots/coupled/step_*.png")
-    print(f"  荷载-位移 → snapshots/load_displacement.png")
+    print("\n  仿真完成。预热图 → snapshots/step_*.png")
+    print("  耦合图 → snapshots/coupled/step_*.png")
+    print("  荷载-位移 → snapshots/load_displacement.png")

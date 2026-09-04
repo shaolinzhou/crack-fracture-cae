@@ -83,7 +83,6 @@ def compute_q4_stiffness(dx, dy, E, nu):
 
     # 2x2 高斯积分点和权重
     gp = [-1.0 / np.sqrt(3.0), 1.0 / np.sqrt(3.0)]
-    w = [1.0, 1.0]
 
     a = dx / 2.0
     b = dy / 2.0
@@ -534,13 +533,13 @@ def save_snapshot(solver, step_idx, stresses):
     # (b) 水平拉应力 σ_xx
     smax = max(abs(np.nanmin(sxx_grid)), abs(np.nanmax(sxx_grid))) if np.any(~np.isnan(sxx_grid)) else 1.0
     im1 = axs[0, 1].contourf(XE, YE, sxx_grid / 1e6, levels=50, cmap="coolwarm", vmin=-smax/1e6, vmax=smax/1e6)
-    axs[0, 1].set_title("Horizontal Stress $\sigma_{xx}$ (MPa)")
+    axs[0, 1].set_title(r"Horizontal Stress $\sigma_{xx}$ (MPa)")
     axs[0, 1].set_aspect("equal")
     fig.colorbar(im1, ax=axs[0, 1])
 
     # (c) 尺度谱指数 d(x)
     im2 = axs[1, 0].contourf(XE, YE, d_grid, levels=50, cmap="viridis", vmin=-3.0, vmax=-0.5)
-    axs[1, 0].set_title("Scale Exponent $d(\mathbf{x})$")
+    axs[1, 0].set_title(r"Scale Exponent $d(\mathbf{x})$")
     axs[1, 0].set_aspect("equal")
     fig.colorbar(im2, ax=axs[1, 0])
 
@@ -617,14 +616,14 @@ if __name__ == "__main__":
     total_steps = 700
     disp_step = 6.0e-6  # 每加载步下压 6.0 微米 (总计下压 0.42 mm)
 
-    print(f"\n========================================================")
-    print(f"  >>> 巴西圆盘压裂实验物理-AI 多尺度有限元模型 (Q4 FEM) <<<")
-    print(f"========================================================")
+    print("\n========================================================")
+    print("  >>> 巴西圆盘压裂实验物理-AI 多尺度有限元模型 (Q4 FEM) <<<")
+    print("========================================================")
     print(f"网格大小: {solver.Nx}x{solver.Ny} (活性单元数: {len(solver.active_elements)})")
     print(f"材料属性: E = {solver.E/1e9:.1f} GPa, nu = {solver.nu}, eps0 = {solver.eps0}")
     print(f"加载制度: 步数 = {total_steps}, 单步位移 = {disp_step*1e6:.1f} μm (最大下压: {total_steps*disp_step*1000:.3f} mm)")
-    print(f" snap输出: 每 5 步渲染并在 snapshots 文件夹保存劈裂应力-损伤双场图")
-    print(f"========================================================\n")
+    print(" snap输出: 每 5 步渲染并在 snapshots 文件夹保存劈裂应力-损伤双场图")
+    print("========================================================\n")
 
     for step in range(1, total_steps + 1):
         disp_val = step * disp_step

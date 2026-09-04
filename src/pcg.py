@@ -98,12 +98,16 @@ class MatrixFreeOperator:
         r, c, v = list(self._coo_rows), list(self._coo_cols), list(elem_vals)
 
         for d in self._inactive_dofs:
-            r.append(d); c.append(d); v.append(1.0)
+            r.append(d)
+            c.append(d)
+            v.append(1.0)
 
         if bc_dofs is not None and len(bc_dofs):
             pen = 1e10 * self.E
             for d in bc_dofs:
-                r.append(int(d)); c.append(int(d)); v.append(pen)
+                r.append(int(d))
+                c.append(int(d))
+                v.append(pen)
 
         return csr_matrix((v, (r, c)), shape=(self.n_dof, self.n_dof))
 

@@ -33,7 +33,7 @@ except ModuleNotFoundError:
     nn = None
     optim = None
 
-from dat_parser import DatModel, Material
+from dat_parser import DatModel
 
 
 def plane_strain_C(E: float, nu: float) -> np.ndarray:

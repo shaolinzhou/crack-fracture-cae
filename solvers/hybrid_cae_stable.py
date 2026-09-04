@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 import os
 import matplotlib.pyplot as plt
@@ -11,7 +10,7 @@ os.makedirs("snapshots", exist_ok=True)
 class StableHybridSolver(BrazilianDiscSolver):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.residual_stiffness = 1e-6 
+        self.residual_stiffness = 1e-6
 
     def solve_elasticity_stable(self, disp_val):
         D_clipped = np.clip(self.D, 0.0, 1.0 - self.residual_stiffness)
@@ -47,7 +46,7 @@ class StableHybridSolver(BrazilianDiscSolver):
         e_avg = 0.5 * (exx + eyy)
         e_diff = np.sqrt((0.5 * (exx - eyy))**2 + exy**2)
         eps_eq = np.sqrt(np.maximum(e_avg+e_diff, 0)**2 + np.maximum(e_avg-e_diff, 0)**2)
-        eps_eq_clipped = np.clip(eps_eq, 0, self.eps0 * 50) 
+        eps_eq_clipped = np.clip(eps_eq, 0, self.eps0 * 50)
         D_target = np.where(eps_eq_clipped > self.eps0,
             1.0 - (self.eps0 / (eps_eq_clipped + 1e-30)) * np.exp(-np.clip(self.beta_soft * (eps_eq_clipped - self.eps0), 0, 50)),
             0.0)

@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
 import matplotlib.pyplot as plt
 import os
 
@@ -30,13 +29,13 @@ class BrazilianDiscEngine:
         self.n_elem = n_elem
         self.net = nn.Sequential(nn.Linear(3, 16), nn.Tanh(), nn.Linear(16, 1))
         self.kernel = LocalAutogradKernel(self.net)
-        
+
     def run_simulation_step(self, step):
         # 模拟应变场
         eps = torch.randn(self.n_elem, 3)
         # 获取局部损伤与梯度
         d_val, dD_deps = self.kernel(eps)
-        
+
         # 可视化状态
         plt.figure(figsize=(6, 4))
         plt.scatter(eps[:, 0].detach(), d_val.detach(), s=5, c=dD_deps[:, 0].detach(), cmap='viridis')
