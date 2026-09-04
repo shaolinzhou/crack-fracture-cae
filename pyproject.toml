@@ -31,7 +31,7 @@ crack-pcg-demo = "src.cli:pcg_demo"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
-exclude = ["tests*", "FEA*"]
+exclude = ["tests*", "FEA*", "src.experimental*"]
 
 [tool.ruff]
 line-length = 100
