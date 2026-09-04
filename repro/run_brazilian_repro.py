@@ -32,6 +32,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.solvers.brazilian_disc_v1 import BrazilianDiscSolver  # noqa: E402
+from src.calibration import (  # noqa: E402
+    calibrated_strength,
+    splitting_strength,
+)
 
 
 def seed_all(seed: int) -> None:
@@ -112,6 +116,8 @@ def run_case(seed: int, Nx: int, steps: int, out_dir: Path) -> dict:
             "peak_load_kN": max(f for _, f in loads) / 1e3,
             "final_load_kN": loads[-1][1] / 1e3,
             "final_maxD": float(np.max(solver.D)),
+            "splitting_strength_MPa": splitting_strength(max(f for _, f in loads)),
+            "calibrated_strength_MPa": calibrated_strength(max(f for _, f in loads)),
         },
         "files": {
             "load_disp_csv": "load_disp.csv",

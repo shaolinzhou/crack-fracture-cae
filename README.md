@@ -127,6 +127,18 @@ at >= 85% via `--cov-fail-under`.
   element-wise `torch.vmap` parallelism, multi-crack / 3D extensions, and batch
   parameterized runs. These are API-compatible next steps rather than rewrites.
 
+## Calibration (C1, reporting)
+
+ISRM (1978) splitting strength: `σ_t = 2 P_peak / (π D t)`. On the intact
+D=50 mm disc (σ_t=6 MPa input) the production staggered engine is
+mesh-converged at ~0.83 of the ISRM reference (Nx96, C1 run
+`benchmarks/run_isrm_calibration.py`). For **reporting** purposes the raw
+back-calculation is multiplied by a calibration factor
+`k = 1/0.8298 ≈ 1.205` (`src/calibration.py::calibrated_strength`) so that the
+reported splitting strength matches the input tensile strength. This is an
+engineering reporting factor, not a material constant; its physical origin
+(early softening) is tracked as an A-series roadmap item.
+
 ## Artifacts & versioning policy
 
 - **Source and small reference data** (`data/*.dat`, `src/`, `solvers/`) are versioned.
