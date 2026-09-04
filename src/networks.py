@@ -135,10 +135,14 @@ def compute_loss(
     Ny: int,
     Nx: int,
     active_indices: list[int],
+    smooth_edges: list[tuple[int, int]] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """Five-term hybrid loss function.
 
-    Returns (loss_total, loss_g, loss_e, loss_f, loss_s).
+    ``smooth_edges`` optionally supplies an explicit (i, j) neighbour graph so
+    the smoothing term works on unstructured meshes (FEA path).  When given,
+    the grid-based finite-difference smoothing (``Ny/Nx/active_indices``) is
+    ignored.  Returns (loss_total, loss_g, loss_e, loss_f, loss_s).
     """
     phi_g_t = torch.tensor(phi, dtype=torch.float32).unsqueeze(1)
     phi_t_t = torch.tensor(phi_test, dtype=torch.float32).unsqueeze(1)
@@ -156,12 +160,17 @@ def compute_loss(
     f_t = torch.tensor(-0.5 + np.log(1.0 - D_np) * 0.3, dtype=torch.float32).unsqueeze(1)
     loss_d = torch.mean((d_pred - f_t) ** 2)
 
-    d_grid_flat = torch.full((Ny * Nx,), -0.5, dtype=torch.float32)
-    d_grid_flat[torch.tensor(active_indices)] = d_pred.squeeze()
-    d_grid = d_grid_flat.view(Ny, Nx)
-    gdx = (d_grid[:, 1:] - d_grid[:, :-1]) / dx
-    gdy = (d_grid[1:, :] - d_grid[:-1, :]) / dy
-    loss_s = l_d ** 2 * (torch.mean(gdx ** 2) + torch.mean(gdy ** 2))
+    if smooth_edges is not None:
+        d_flat = d_pred.squeeze()
+        terms = [(d_flat[i] - d_flat[j]) ** 2 for i, j in smooth_edges]
+        loss_s = l_d ** 2 * torch.mean(torch.stack(terms)) if terms else d_flat.sum() * 0.0
+    else:
+        d_grid_flat = torch.full((Ny * Nx,), -0.5, dtype=torch.float32)
+        d_grid_flat[torch.tensor(active_indices)] = d_pred.squeeze()
+        d_grid = d_grid_flat.view(Ny, Nx)
+        gdx = (d_grid[:, 1:] - d_grid[:, :-1]) / dx
+        gdy = (d_grid[1:, :] - d_grid[:-1, :]) / dy
+        loss_s = l_d ** 2 * (torch.mean(gdx ** 2) + torch.mean(gdy ** 2))
 
     loss_total = lam_g * loss_g + lam_e * loss_e + lam_f * loss_f + lam_d * loss_d + lam_s * loss_s
     return loss_total, loss_g, loss_e, loss_f, loss_s

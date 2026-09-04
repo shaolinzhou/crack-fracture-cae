@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 
 def _run_module(module: str) -> int:
@@ -28,3 +29,16 @@ def crack_v1() -> None:
 def pcg_demo() -> None:
     """Run the PCG vs spsolve consistency demo."""
     raise SystemExit(_run_module("src.pcg_demo"))
+
+
+def fea_run() -> None:
+    """Run the DAT-driven FEA solver from a repository checkout.
+
+    FEA/ is intentionally not part of the installed wheel; this entry point
+    shells out to the checked-out ``FEA/run_fea.py`` and forwards CLI arguments.
+    """
+    script = Path(__file__).resolve().parents[1] / "FEA" / "run_fea.py"
+    if not script.exists():
+        print("crack-fea requires a repository checkout (FEA/ is not packaged).")
+        raise SystemExit(2)
+    raise SystemExit(subprocess.call([sys.executable, str(script), *sys.argv[1:]]))

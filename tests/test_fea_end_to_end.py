@@ -65,3 +65,18 @@ def test_multimaterial_dat_solver_end_to_end(tmp_path: Path):
     assert solver.strains.shape == (model.n_elements, 3)
     assert np.max(np.abs(solver.strains)) > 0.0  # strain field is populated
     assert solver.D.shape == (model.n_elements,)
+
+
+def test_fea_coupled_step_runs_features_and_loss(tmp_path: Path):
+    dp, s = _load_fea()
+    dat = tmp_path / "mm.dat"
+    dat.write_text(_multimaterial_dat(), encoding="utf-8")
+    model = dp.read_dat(dat)
+
+    cfg = s.SolverConfig(n_warmup=0, n_coupled=1, output_stride=1)
+    solver = s.DatCrackSolver(model, output_dir=tmp_path / "out2", config=cfg)
+    F, eps_eq, loss_t, is_warmup = solver.step(1.0, 0)
+    assert is_warmup is False
+    assert F > 0.0
+    assert loss_t is not None and np.isfinite(loss_t.item())
+    assert np.all(np.isfinite(solver.d_field))

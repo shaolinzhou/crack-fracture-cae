@@ -53,9 +53,18 @@ from src.fem_utils import (  # noqa: E402
     plane_strain_C,
     q4_unit_stiffness,
 )
+from src.fea_kernels import (  # noqa: E402
+    ball_neighbor_mean,
+    element_damage_features,
+    knn_max_gradient,
+    smooth_edges_from_tree,
+)
 
 if HAS_TORCH:
-    from src.networks import PhysicsScaleNetSolid  # noqa: E402
+    from src.networks import (  # noqa: E402
+        PhysicsScaleNetSolid,
+        compute_loss as _compute_loss_src,
+    )
 else:
 
     class PhysicsScaleNetSolid:  # noqa: D101
@@ -250,11 +259,7 @@ class DatCrackSolver:
 
     def _nonlocal_average(self, values: np.ndarray, radius: float | None = None) -> np.ndarray:
         radius = radius or (2.5 * self.char_len)
-        neighbors = self.elem_tree.query_ball_point(self.centers, radius)
-        out = np.empty_like(values)
-        for i, ids in enumerate(neighbors):
-            out[i] = float(np.mean(values[ids])) if ids else values[i]
-        return out
+        return ball_neighbor_mean(self.centers, values, radius)
 
     def solve_elasticity(self, load_factor: float) -> float:
         D_clipped = np.clip(self.D, 0.0, 1.0 - self.config.residual_stiffness)
@@ -309,37 +314,10 @@ class DatCrackSolver:
         return driving * damping, eps_eq
 
     def compute_features(self):
-        sxx, syy, sxy = self.stresses[:, 0], self.stresses[:, 1], self.stresses[:, 2]
-        szz = self.nu * (sxx + syy)
-        sm = (sxx + syy + szz) / 3.0
-        Sxx, Syy, Szz = sxx - sm, syy - sm, szz - sm
-        J2 = 0.5 * (Sxx**2 + Syy**2 + Szz**2) + sxy**2
-        seq = np.sqrt(3.0 * J2 + 1e-30)
-        eta = sm / (seq + 1e-12)
-        J3 = Sxx * Syy * Szz - Szz * sxy**2
-        cos_arg = np.clip(27.0 * J3 / (2.0 * seq**3 + 1e-30), -1.0, 1.0)
-        theta_bar = 1.0 - (2.0 / np.pi) * np.arccos(cos_arg)
-
-        exy = self.strains[:, 2] * 0.5
-        eps_eq = mazars_equivalent_strain(self.strains[:, 0], self.strains[:, 1], exy)
-
-        neighbor_ids = self.elem_tree.query(self.centers, k=min(7, self.n_active))[1]
-        gD = np.zeros(self.n_active, dtype=float)
-        for i, ids in enumerate(np.atleast_2d(neighbor_ids)):
-            dist = np.linalg.norm(self.centers[ids] - self.centers[i], axis=1)
-            diff = np.abs(self.D[ids] - self.D[i])
-            mask = dist > 1e-12
-            gD[i] = np.max(diff[mask] / dist[mask]) if np.any(mask) else 0.0
-
-        F_np = np.stack(
-            [
-                self.D,
-                np.tanh(eta),
-                np.tanh(theta_bar),
-                np.tanh(eps_eq / self.eps0 - 1.0),
-                np.tanh(self.config.l_c * gD),
-            ],
-            axis=1,
+        gD = knn_max_gradient(self.centers, self.D, k=min(7, self.n_active))
+        F_np = element_damage_features(
+            self.D, self.strains, self.stresses, self.nu, self.eps0,
+            self.config.l_c, gD,
         )
         if HAS_TORCH:
             return torch.tensor(F_np, dtype=torch.float32)
@@ -356,42 +334,16 @@ class DatCrackSolver:
     def compute_loss(
         self, d_pred, phi: np.ndarray, phi_test: np.ndarray
     ):
+        """Five-term loss delegated to src.networks.compute_loss (graph smoothing)."""
         if not HAS_TORCH:
             raise RuntimeError("compute_loss requires PyTorch")
-        lambda_L = 3.0
-        phi_g_t = torch.tensor(phi, dtype=torch.float32).unsqueeze(1)
-        phi_t_t = torch.tensor(phi_test, dtype=torch.float32).unsqueeze(1)
-        pred_ratio = lambda_L**d_pred
-        loss_g = torch.sum((pred_ratio * phi_g_t - phi_t_t) ** 2) / (torch.sum(phi_g_t**2) + 1e-15)
-
-        D_t = torch.tensor(self.D, dtype=torch.float32).unsqueeze(1)
-        mask_e = (D_t < 0.01).float()
-        loss_e = torch.sum(mask_e * (d_pred - (-0.5)) ** 2) / (mask_e.sum() + 1e-15)
-
-        mask_f = (D_t > 0.9).float()
-        loss_f = torch.sum(mask_f * torch.exp(2.0 * d_pred)) / (mask_f.sum() + 1e-15)
-
-        D_np = np.clip(self.D.copy(), 0.0, 0.999)
-        f_t = torch.tensor(-0.5 + np.log(1.0 - D_np) * 0.3, dtype=torch.float32).unsqueeze(1)
-        loss_d = torch.mean((d_pred - f_t) ** 2)
-
-        neighbor_ids = self.elem_tree.query(self.centers, k=min(5, self.n_active))[1]
-        d_flat = d_pred.squeeze()
-        smooth_terms = []
-        for ids in np.atleast_2d(neighbor_ids):
-            idx0 = int(ids[0])
-            for idx1 in ids[1:]:
-                smooth_terms.append((d_flat[idx0] - d_flat[int(idx1)]) ** 2)
-        loss_s = self.config.l_d**2 * torch.stack(smooth_terms).mean() if smooth_terms else d_flat.sum() * 0.0
-
-        loss_total = (
-            self.config.lam_g * loss_g
-            + self.config.lam_e * loss_e
-            + self.config.lam_f * loss_f
-            + self.config.lam_d * loss_d
-            + self.config.lam_s * loss_s
+        cfg = self.config
+        edges = smooth_edges_from_tree(self.centers, k=min(5, self.n_active))
+        return _compute_loss_src(
+            d_pred, self.D, phi, phi_test, 3.0,
+            cfg.lam_g, cfg.lam_e, cfg.lam_f, cfg.lam_d, cfg.lam_s,
+            cfg.l_d, 1.0, 1.0, 0, 0, [], smooth_edges=edges,
         )
-        return loss_total, loss_g, loss_e, loss_f, loss_s
 
     def update_damage(self, delta_D_base: np.ndarray, d_field: np.ndarray, use_scaling: bool) -> None:
         if use_scaling:

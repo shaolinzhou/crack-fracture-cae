@@ -27,6 +27,7 @@ dev = [
 crack-cae = "src.cli:crack_v2"
 crack-cae-v1 = "src.cli:crack_v1"
 crack-pcg-demo = "src.cli:pcg_demo"
+crack-fea = "src.cli:fea_run"
 
 [tool.setuptools.packages.find]
 where = ["."]
